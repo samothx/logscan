@@ -196,12 +196,15 @@ aggregate = { group_by = ["host", "ip"] }
 collect = ["path"]
 [[rule.test]]
 line = '8.8.8.8 - - [01/Oct/2026:10:00:00 +0200] "GET / HTTP/1.1" 200 1000 "-" "-" sn="n8n.services.etnur.net"'
+lists = { vpn_only_hosts = ["*.services.etnur.net"], trusted_networks = ["10.8.1.0/24"] }
 expect = true
 [[rule.test]]
 line = '10.8.1.5 - - [01/Oct/2026:10:00:00 +0200] "GET / HTTP/1.1" 200 1000 "-" "-" sn="n8n.services.etnur.net"'
+lists = { vpn_only_hosts = ["*.services.etnur.net"], trusted_networks = ["10.8.1.0/24"] }
 expect = false
 [[rule.test]]
 line = '8.8.8.8 - - [01/Oct/2026:10:00:00 +0200] "GET / HTTP/1.1" 444 0 "-" "-" sn="n8n.services.etnur.net"'
+lists = { vpn_only_hosts = ["*.services.etnur.net"], trusted_networks = ["10.8.1.0/24"] }
 expect = false
 
 [[rule]]
@@ -215,9 +218,11 @@ aggregate = { group_by = ["host", "ip", "method"] }
 collect = ["path"]
 [[rule.test]]
 line = '8.8.8.8 - - [01/Oct/2026:10:00:00 +0200] "PUT /v2/x/manifests/prod HTTP/1.1" 201 0 "-" "docker/27" sn="registry.etnur.net"'
+lists = { write_watch_hosts = ["registry.etnur.net"], trusted_networks = ["10.8.1.0/24"] }
 expect = true
 [[rule.test]]
 line = '10.8.1.5 - - [01/Oct/2026:10:00:00 +0200] "PUT /v2/x/manifests/prod HTTP/1.1" 201 0 "-" "docker/27" sn="registry.etnur.net"'
+lists = { write_watch_hosts = ["registry.etnur.net"], trusted_networks = ["10.8.1.0/24"] }
 expect = false
 
 [[rule]]

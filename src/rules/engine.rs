@@ -1,6 +1,6 @@
 //! Runs a RuleSet over a stream of events: grouping, thresholds, correlation, modifiers.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::{DateTime, Local};
 
@@ -45,6 +45,8 @@ pub struct Engine<'a> {
     req_counts: Vec<HashMap<String, u64>>,
     pub events: Vec<Stored>,
     keep_events: bool,
+    /// (host, bytes) of `GET / → 200` answers, for soft404_check.
+    homepage_sizes: HashSet<(String, u64)>,
 }
 
 pub struct Outcome {
@@ -87,10 +89,19 @@ impl<'a> Engine<'a> {
             req_specs,
             events: Vec::new(),
             keep_events,
+            homepage_sizes: HashSet::new(),
         }
     }
 
     pub fn feed(&mut self, ev: Event) {
+        if let Event::Nginx(n) = &ev
+            && n.path == "/"
+            && n.req.status == 200
+            && n.req.method == "GET"
+            && self.homepage_sizes.len() < 10_000
+        {
+            self.homepage_sizes.insert((n.req.host.to_ascii_lowercase(), n.req.bytes));
+        }
         let mut strongest: Option<Kind> = None;
         let mut matched_rules = Vec::new();
         for (idx, rule) in self.set.rules.iter().enumerate() {
@@ -188,10 +199,12 @@ impl<'a> Engine<'a> {
                     });
                 }
                 Kind::Alert => {
+                    // Catch-all page: one size for ≥3 different matched paths, or exactly the size
+                    // of the host's homepage (apps that answer unknown paths with `/`).
                     let catch_all: BTreeSet<&(String, u64)> = acc
                         .sizes
                         .iter()
-                        .filter(|(_, paths)| paths.len() >= SOFT404_PATHS)
+                        .filter(|(k, paths)| paths.len() >= SOFT404_PATHS || self.homepage_sizes.contains(*k))
                         .map(|(k, _)| k)
                         .collect();
                     // First run of a new_value_of rule only learns (otherwise everything is "new").
@@ -227,7 +240,7 @@ impl<'a> Engine<'a> {
                         let mut title = rule.render_title(&g.fields);
                         if rule.soft404_check && !g.sizes.is_empty() && g.sizes.iter().all(|s| catch_all.contains(s)) {
                             severity = severity.min(Severity::Low);
-                            title.push_str(" (same size as other probes: likely a catch-all page)");
+                            title.push_str(" (same size as a catch-all or home page: probably not the real file)");
                         }
                         let mut detail = if g.count == 1 {
                             format!("1 event at {}", g.first.format("%Y-%m-%d %H:%M:%S"))
@@ -343,6 +356,13 @@ match = { trusted = true }
         let one = run(&[line("3.3.3.3", "GET", "/.env", 200, 120, "a.de")]);
         assert_eq!(one.findings[0].severity, Severity::Critical);
 
+        // Same size as the host's homepage → the app answered with `/`.
+        let home = run(&[
+            line("3.3.3.3", "GET", "/", 200, 3207, "fb.de"),
+            line("3.3.3.3", "GET", "/.env", 200, 3207, "fb.de"),
+        ]);
+        assert_eq!(home.findings[0].severity, Severity::Low);
+
         let spa = run(&[
             line("3.3.3.3", "GET", "/.env", 200, 5000, "spa.de"),
             line("3.3.3.3", "GET", "/api/.env", 200, 5000, "spa.de"),
@@ -378,7 +398,7 @@ new_value_of = "ip"
         let ev = |ip: &str| {
             let t = crate::rules::TestDef {
                 line: None, ident: Some("sshd".into()), message: Some(format!("Accepted from {ip}")),
-                priority: None, kernel: None, trusted: None, expect: true,
+                priority: None, kernel: None, trusted: None, lists: Default::default(), expect: true,
             };
             crate::rules::test_event(&set.rules[0], &t, &cfg).unwrap()
         };

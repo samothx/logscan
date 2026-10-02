@@ -36,14 +36,17 @@ aggregate = { group_by = ["user", "ip", "key"] }
 [[rule.test]]
 ident = "sshd-session"
 message = "Accepted publickey for thomas from 10.8.1.5 port 51514 ssh2: ED25519 SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"
+lists = { ssh_users = ["thomas"], ssh_keys = ["SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"] }
 expect = false
 [[rule.test]]
 ident = "sshd-session"
 message = "Accepted publickey for thomas from 10.8.1.5 port 51514 ssh2: ED25519 SHA256:AAAAotherkeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+lists = { ssh_users = ["thomas"], ssh_keys = ["SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"] }
 expect = true
 [[rule.test]]
 ident = "sshd"
 message = "Accepted publickey for deploy from 1.2.3.4 port 51514 ssh2: RSA SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"
+lists = { ssh_users = ["thomas"], ssh_keys = ["SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"] }
 expect = true
 
 [[rule]]
@@ -58,9 +61,11 @@ aggregate = { group_by = ["ip"] }
 new_value_of = "ip"
 [[rule.test]]
 line = "sshd-session: Accepted publickey for thomas from 2a02:3030:a1e:27c3::3 port 4 ssh2: ED25519 SHA256:x"
+lists = { trusted_networks = ["10.8.1.0/24"] }
 expect = true
 [[rule.test]]
 line = "sshd-session: Accepted publickey for thomas from 10.8.1.5 port 4 ssh2: ED25519 SHA256:x"
+lists = { trusted_networks = ["10.8.1.0/24"] }
 expect = false
 
 [[rule]]
@@ -135,9 +140,11 @@ where = { all = [ { user = { not_in = "@sudo_users" } } ] }
 aggregate = { group_by = ["user"] }
 [[rule.test]]
 line = "sudo: thomas : TTY=pts/7 ; PWD=/home/thomas ; USER=root ; COMMAND=/usr/bin/true"
+lists = { sudo_users = ["thomas"] }
 expect = false
 [[rule.test]]
 line = "sudo: mallory : TTY=pts/7 ; PWD=/home/mallory ; USER=root ; COMMAND=/usr/bin/id"
+lists = { sudo_users = ["thomas"] }
 expect = true
 
 [[rule]]
@@ -194,12 +201,15 @@ where = { all = [ { group = { in = "@priv_groups" } } ] }
 aggregate = { group_by = ["message"] }
 [[rule.test]]
 line = "usermod: add 'thomas' to group 'ntfy-senders'"
+lists = { priv_groups = ["sudo", "adm", "docker", "ntfy-senders"] }
 expect = true
 [[rule.test]]
 line = "usermod: add 'thomas' to group 'video'"
+lists = { priv_groups = ["sudo", "adm", "docker", "ntfy-senders"] }
 expect = false
 [[rule.test]]
 line = "gpasswd: user www-data added by root to group docker"
+lists = { priv_groups = ["sudo", "adm", "docker", "ntfy-senders"] }
 expect = true
 
 [[rule]]

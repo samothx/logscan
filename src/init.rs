@@ -316,4 +316,21 @@ mod tests {
         assert!(cfg.is_trusted("2a0a:4cc0:c1:6ea0::5"));
         assert!(cfg.llm.host_context.contains("Test host"));
     }
+
+    /// Shipped rule tests must not depend on anubis's lists: run them against a generated config.
+    #[test]
+    fn shipped_rule_tests_pass_with_generated_config() {
+        let (s, _) = generate(&Options {
+            trust: Vec::new(),
+            ssh_users: vec!["nobody-here".into()],
+            email_to: Vec::new(),
+            email_from: None,
+            host_context: None,
+        })
+        .unwrap();
+        let cfg = Config::parse(&s, "defaults".into()).unwrap();
+        let rs = crate::rules::RuleSet::load_dir(&cfg.rules_dir(), &cfg).unwrap();
+        let fails = rs.run_tests(&cfg);
+        assert!(fails.is_empty(), "host-dependent rule tests:\n{}", fails.join("\n"));
+    }
 }

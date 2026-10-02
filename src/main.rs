@@ -436,6 +436,7 @@ fn cmd_rules(cfg: &Config, cmd: &RulesCmd) -> Result<ExitCode> {
                 priority: *priority,
                 kernel: None,
                 trusted: *trusted,
+                lists: Default::default(),
                 expect: true,
             };
             let ev = test_event(rule, &t, cfg)?;

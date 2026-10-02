@@ -140,6 +140,9 @@ pub struct TestDef {
     pub kernel: Option<bool>,
     /// nginx: override the trusted flag computed from `[lists] trusted_networks`.
     pub trusted: Option<bool>,
+    /// Replaces these `[lists]` for this test only, so shipped tests don't depend on the host's config.
+    #[serde(default)]
+    pub lists: BTreeMap<String, Vec<String>>,
     pub expect: bool,
 }
 
@@ -328,6 +331,8 @@ pub struct Rule {
     pub paths: Vec<String>,
     pub collect: Vec<String>,
     pub tests: Vec<TestDef>,
+    /// The definition it was compiled from (tests with their own `lists` recompile it).
+    pub def: RuleDef,
 }
 
 impl Rule {
@@ -409,6 +414,8 @@ pub struct RuleSet {
     pub rules: Vec<Rule>,
     /// Rules with `enabled = false` (listed, not evaluated).
     pub disabled: Vec<(String, PathBuf)>,
+    /// `[patterns]` from all rule files.
+    pub patterns: BTreeMap<String, String>,
 }
 
 impl RuleSet {
@@ -451,10 +458,11 @@ impl RuleSet {
                     continue;
                 }
                 let id = def.id.clone();
-                let rule = compile(def, path, cfg, &patterns).with_context(|| format!("{}: rule '{id}'", path.display()))?;
+                let rule = compile(def, path, &cfg.lists, &patterns).with_context(|| format!("{}: rule '{id}'", path.display()))?;
                 set.rules.push(rule);
             }
         }
+        set.patterns = patterns;
         // Cross-rule references.
         for r in &set.rules {
             if let Some(req) = &r.requires {
@@ -478,8 +486,25 @@ impl RuleSet {
     /// Runs every rule's inline `[[rule.test]]` cases. Returns one message per failure.
     pub fn run_tests(&self, cfg: &Config) -> Vec<String> {
         let mut fails = Vec::new();
-        for r in &self.rules {
-            for (i, t) in r.tests.iter().enumerate() {
+        for base in &self.rules {
+            for (i, t) in base.tests.iter().enumerate() {
+                let owned;
+                let r = if t.lists.is_empty() {
+                    base
+                } else {
+                    let mut lists = cfg.lists.clone();
+                    lists.extend(t.lists.clone());
+                    match compile(base.def.clone(), &base.file, &lists, &self.patterns) {
+                        Ok(rule) => {
+                            owned = rule;
+                            &owned
+                        }
+                        Err(e) => {
+                            fails.push(format!("{} test #{}: {e:#}", base.id, i + 1));
+                            continue;
+                        }
+                    }
+                };
                 match test_event(r, t, cfg) {
                     Ok(ev) => {
                         let got = r.match_event(&ev).is_some();
@@ -513,7 +538,12 @@ pub fn test_event(rule: &Rule, t: &TestDef, cfg: &Config) -> Result<Event> {
         SourceKind::Nginx => {
             let line = t.line.as_deref().ok_or_else(|| anyhow!("nginx test needs `line`"))?;
             let req = parse_access_line(line).ok_or_else(|| anyhow!("not a vhost_combined line: {line}"))?;
-            let trusted = t.trusted.unwrap_or_else(|| cfg.is_trusted(&req.ip));
+            let trusted = t.trusted.unwrap_or_else(|| match t.lists.get(crate::config::TRUSTED_LIST) {
+                Some(nets) => req.ip.parse::<IpAddr>().is_ok_and(|a| {
+                    nets.iter().filter_map(|n| n.parse::<IpNet>().ok()).any(|n| n.contains(&a))
+                }),
+                None => cfg.is_trusted(&req.ip),
+            });
             Event::Nginx(NginxEvent::new(req, trusted))
         }
         SourceKind::Journal => {
@@ -577,7 +607,13 @@ fn parse_source(s: &str) -> Result<(SourceKind, Option<PathBuf>)> {
     })
 }
 
-fn compile(def: RuleDef, file: &Path, cfg: &Config, patterns: &BTreeMap<String, String>) -> Result<Rule> {
+fn compile(
+    def: RuleDef,
+    file: &Path,
+    lists: &BTreeMap<String, Vec<String>>,
+    patterns: &BTreeMap<String, String>,
+) -> Result<Rule> {
+    let original = def.clone();
     let (source, source_path) = parse_source(&def.source)?;
     let severity = match (def.kind, def.severity) {
         (Kind::Alert, Some(s)) => s,
@@ -588,7 +624,7 @@ fn compile(def: RuleDef, file: &Path, cfg: &Config, patterns: &BTreeMap<String, 
         bail!("file_changed rules need `paths`");
     }
 
-    let ctx = Ctx { cfg, source, patterns };
+    let ctx = Ctx { lists, source, patterns };
     let matches = ctx.conds(&def.matches)?;
     let groups = |v: &Vec<BTreeMap<String, CondDef>>| v.iter().map(|m| ctx.conds(m)).collect::<Result<Vec<_>>>();
     let all = groups(&def.where_.all)?;
@@ -660,11 +696,12 @@ fn compile(def: RuleDef, file: &Path, cfg: &Config, patterns: &BTreeMap<String, 
         paths: def.paths,
         collect: def.collect,
         tests: def.test,
+        def: original,
     })
 }
 
 struct Ctx<'a> {
-    cfg: &'a Config,
+    lists: &'a BTreeMap<String, Vec<String>>,
     source: SourceKind,
     patterns: &'a BTreeMap<String, String>,
 }
@@ -767,8 +804,7 @@ impl Ctx<'_> {
         for it in items {
             match it.strip_prefix('@') {
                 Some(name) => out.extend(
-                    self.cfg
-                        .lists
+                    self.lists
                         .get(name)
                         .ok_or_else(|| anyhow!("unknown list '@{name}' (define it under [lists])"))?
                         .iter()
@@ -881,7 +917,7 @@ where = { any = [ { user = { not_in = "@ssh_users" } } ] }
         let r = &rs.rules[0];
         let mk = |m: &str| test_event(r, &TestDef {
             line: None, ident: Some("sshd".into()), message: Some(m.into()),
-            priority: None, kernel: None, trusted: None, expect: true,
+            priority: None, kernel: None, trusted: None, lists: Default::default(), expect: true,
         }, &cfg()).unwrap();
         assert!(r.match_event(&mk("Accepted publickey for thomas from 1.2.3.4 port 1 ssh2")).is_none());
         let caps = r.match_event(&mk("Accepted publickey for mallory from 1.2.3.4 port 1 ssh2")).unwrap();
