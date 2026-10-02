@@ -1,0 +1,125 @@
+# Kernel, rootkit scanners and other system signals.
+#
+# file:<path> sources are read only if the file was modified inside the window.
+# Fields: file, line (timestamp prefix like "[06:25:54] " stripped), context (continuation lines).
+
+[[rule]]
+id = "kernel.apparmor_denied"
+source = "journal"
+severity = "medium"
+title = "AppArmor denied {operation} for profile {profile}"
+match = { kernel = true, message = 'apparmor="DENIED" operation="(?P<operation>[^"]+)".*?profile="(?P<profile>[^"]+)"' }
+aggregate = { group_by = ["profile", "operation"] }
+[[rule.test]]
+line = 'kernel: audit: type=1400 audit(1790850084.569:112): apparmor="DENIED" operation="capable" class="cap" profile="unbound" pid=875239 comm="unbound" capability=12  capname="net_admin"'
+expect = true
+
+[[rule]]
+id = "kernel.segfault"
+source = "journal"
+severity = "low"
+title = "Process crashed: {comm}"
+description = "Segfaults in network-facing processes can be exploitation attempts."
+match = { kernel = true, message = '^(?:(?P<comm>\S+)\[\d+\]: segfault at|traps: (?P<comm2>\S+)\[\d+\] general protection|general protection fault)' }
+aggregate = { group_by = ["comm"] }
+[[rule.test]]
+line = "kernel: nginx[1234]: segfault at 0 ip 000055d5 sp 00007ffc error 4 in nginx[55d5+1000]"
+expect = true
+
+[[rule]]
+id = "kernel.syn_flood"
+source = "journal"
+severity = "medium"
+title = "Possible SYN flood"
+match = { kernel = true, message = 'Possible SYN flooding' }
+
+[[rule]]
+id = "kernel.oom"
+source = "journal"
+kind = "stat"
+title = "OOM kills (by process)"
+match = { kernel = true, message = 'Out of memory: Killed process \d+ \((?P<comm>[^)]+)\)' }
+aggregate = { group_by = ["comm"] }
+
+[[rule]]
+id = "kernel.module_loaded"
+source = "journal"
+severity = "medium"
+title = "Kernel taint / unsigned module: {message}"
+description = "A module that taints the kernel was loaded (could be a rootkit, or a DKMS driver)."
+match = { kernel = true, message = '(?:module verification failed|loading out-of-tree module taints kernel|taints kernel)' }
+aggregate = { group_by = ["message"] }
+
+# ---------------------------------------------------------------------------------------
+# rkhunter (/var/log/rkhunter.log, rewritten on every run ~06:25)
+# ---------------------------------------------------------------------------------------
+
+[patterns]
+rootkit_words = '(?i)rootkit|trojan|backdoor|hidden (?:file|dir|process|port)|promisc|packet (?:capture|sniffer)|suspicious|LKM'
+
+[[rule]]
+id = "rkhunter.rootkit"
+source = "file:/var/log/rkhunter.log"
+severity = "high"
+title = "rkhunter: {warning}"
+match = { line = '^Warning: (?P<warning>.*)$' }
+where = { any = [ { line = "{{rootkit_words}}" }, { context = "{{rootkit_words}}" } ] }
+aggregate = { group_by = ["warning"] }
+[[rule.test]]
+line = "Warning: Hidden file found: /dev/.blKb: ASCII text"
+expect = true
+[[rule.test]]
+line = "Warning: User '_ntfy' has been added to the passwd file."
+expect = false
+
+[[rule]]
+id = "rkhunter.warning"
+source = "file:/var/log/rkhunter.log"
+severity = "medium"
+title = "rkhunter: {warning}"
+description = "Usually caused by our own changes (new users/groups, package updates). Confirm it matches a change you made."
+match = { line = '^Warning: (?P<warning>.*)$' }
+where = { none = [ { line = "{{rootkit_words}}" }, { context = "{{rootkit_words}}" } ] }
+aggregate = { group_by = ["warning"] }
+[[rule.test]]
+line = "Warning: User '_ntfy' has been added to the passwd file."
+expect = true
+
+# ---------------------------------------------------------------------------------------
+# chkrootkit (/var/log/chkrootkit/log.today, daily ~00:05)
+# ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "chkrootkit.infected"
+source = "file:/var/log/chkrootkit/log.today"
+severity = "high"
+title = "chkrootkit: {line}"
+match = { line = '(?:\bINFECTED\b|Vulnerable but disabled|\bVulnerable\b|PACKET SNIFFER|Possible .*(?:rootkit|installed))' }
+# systemd-networkd & co. legitimately hold packet sockets; chkdirs fails on btrfs.
+where = { none = [ { line = 'chkdirs failed' }, { line = 'PACKET SNIFFER.*(?:systemd-networkd|dhclient|dhcpcd|wpa_supplicant|NetworkManager)' } ] }
+aggregate = { group_by = ["line"] }
+[[rule.test]]
+line = "Checking `bindshell'...                                     INFECTED (PORTS:  465)"
+expect = true
+[[rule.test]]
+line = "Checking `chsh'...                                          not infected"
+expect = false
+[[rule.test]]
+line = "WARNING: chkdirs: Possible LKM Trojan installed (or chkdirs failed):"
+expect = false
+[[rule.test]]
+line = "<interface>: PACKET SNIFFER([systemd-networkd|dhclient|dhcpd|dhcpcd|wpa_supplicant|NetworkManager]{PID})"
+expect = false
+
+[[rule]]
+id = "chkrootkit.suspicious_files"
+source = "file:/var/log/chkrootkit/log.today"
+severity = "medium"
+title = "chkrootkit: {line}"
+description = "chkrootkit listed files that don't belong to a Debian package (package-owned files and agent scratchpads under /tmp/claude-* are expected)."
+match = { line = '^WARNING: The following suspicious' }
+where = { none = [ { context = '^(?:(?:\S+ \[From Debian package: [^\]]+\]|/tmp/claude-\d+/\S+)\s*(?:\n|$))+$' } ] }
+aggregate = { group_by = ["line"] }
+[[rule.test]]
+line = "WARNING: The following suspicious PHP files were found:"
+expect = true

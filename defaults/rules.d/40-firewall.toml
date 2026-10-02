@@ -1,0 +1,46 @@
+# Firewall LOG lines from /etc/iptables/rules.v{4,6} (kernel messages).
+# Only *new* outbound connections (SYN without ACK, or UDP) are interesting; ACK/RST lines are
+# replies to connections that already died and are dropped as noise.
+
+[patterns]
+fw_line = 'SRC=(?P<src>\S+) DST=(?P<dst>\S+) .*?PROTO=(?P<proto>\S+)(?: .*?DPT=(?P<dpt>\d+))?'
+
+[[rule]]
+id = "fw.container_egress_blocked"
+source = "journal"
+severity = "high"
+title = "Container tried to reach {dst}:{dpt}/{proto} (blocked)"
+description = "A container opened a connection the firewall doesn't allow. Typical for a compromised container calling home, or a misconfigured app."
+match = { kernel = true, message = '^DOCKER(?:-v6)?-REJECT: IN=(?P<in>(?:docker|br-)\S*) OUT=(?P<out>\S*) .*{{fw_line}}' }
+where = { none = [ { out = '^(?:docker|br-)' }, { message = ' ACK ' }, { dst = { cidr = "@allowed_egress" } } ], any = [ { message = ' SYN ' }, { proto = '^UDP' } ] }
+aggregate = { group_by = ["dst", "dpt", "proto"] }
+collect = ["src"]
+[[rule.test]]
+line = "kernel: DOCKER-REJECT: IN=br-1a2b OUT=ens3 MAC=x SRC=172.18.0.5 DST=45.9.148.3 LEN=60 TOS=0x00 PREC=0x00 TTL=63 ID=1 DF PROTO=TCP SPT=40000 DPT=3333 WINDOW=64240 RES=0x00 SYN URGP=0"
+expect = true
+[[rule.test]]
+line = "kernel: DOCKER-REJECT: IN=ens3 OUT=br-1a2b SRC=45.9.148.3 DST=172.18.0.5 LEN=60 PROTO=TCP SPT=4000 DPT=80 WINDOW=64240 RES=0x00 SYN URGP=0"
+expect = false
+
+[[rule]]
+id = "fw.egress_blocked"
+source = "journal"
+severity = "medium"
+title = "Host tried to reach {dst}:{dpt}/{proto} (blocked)"
+description = "A process on the host opened an outbound connection the firewall blocks. Add expected destinations to @allowed_egress."
+match = { kernel = true, message = '^OUT(?:-v6)?-REJECT: .*{{fw_line}}' }
+where = { none = [ { message = ' ACK ' }, { dst = { cidr = "@allowed_egress" } } ], any = [ { message = ' SYN ' }, { proto = '^UDP' } ] }
+aggregate = { group_by = ["dst", "dpt", "proto"] }
+collect = ["src"]
+[[rule.test]]
+line = "kernel: OUT-REJECT: IN= OUT=ens3 SRC=159.195.35.234 DST=46.38.243.234 LEN=60 TOS=0x00 PREC=0x00 TTL=64 ID=13187 DF PROTO=TCP SPT=46706 DPT=5432 WINDOW=64240 RES=0x00 SYN URGP=0"
+expect = true
+[[rule.test]]
+line = "kernel: OUT-v6-REJECT: IN= OUT=ens3 SRC=2a0a:4cc0:00c1:6ea0:6885:11ff:fe3e:f1b2 DST=2806:10a6:0009:b3a7:f93d:b317:136f:aedb  TC=0 HOPLIMIT=64 FLOWLBL=442365 PROTO=TCP SPT=443 DPT=50510 WINDOW=0 RES=0x00 ACK URGP=0"
+expect = false
+
+[[rule]]
+id = "noise.fw_replies"
+source = "journal"
+kind = "ignore"
+match = { kernel = true, message = '^(?:OUT|DOCKER)(?:-v6)?-REJECT: .* (?:ACK|RST) ' }

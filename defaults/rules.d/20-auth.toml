@@ -1,0 +1,229 @@
+# Authentication and account rules (source = "journal").
+#
+# Fields: ident (SYSLOG_IDENTIFIER), unit, message (ANSI stripped), priority (0-7), kernel ("true"/"false")
+# Journal tests: `ident` + `message`, or `line = "ident: message"`.
+
+# ---------------------------------------------------------------------------------------
+# SSH
+# ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "ssh.password_login"
+source = "journal"
+severity = "critical"
+title = "SSH {method} login accepted for {user} from {ip}"
+description = "PasswordAuthentication/KbdInteractiveAuthentication are disabled on this host, so this must not happen. Check sshd_config and the session."
+match = { ident = ["sshd", "sshd-session"], message = '^Accepted (?P<method>password|keyboard-interactive\S*) for (?P<user>\S+) from (?P<ip>\S+)' }
+aggregate = { group_by = ["user", "ip"] }
+[[rule.test]]
+ident = "sshd-session"
+message = "Accepted password for root from 45.1.2.3 port 51514 ssh2"
+expect = true
+[[rule.test]]
+ident = "sshd-session"
+message = "Accepted publickey for thomas from 10.8.1.5 port 51514 ssh2: ED25519 SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"
+expect = false
+
+[[rule]]
+id = "ssh.unknown_login"
+source = "journal"
+severity = "high"
+title = "SSH login by {user} from {ip} with key {key}"
+description = "Login with a user or key that is not in @ssh_users / @ssh_keys. If it was you, add the key fingerprint to the list."
+match = { ident = ["sshd", "sshd-session"], message = '^Accepted (?P<method>publickey|hostbased|gssapi\S*) for (?P<user>\S+) from (?P<ip>\S+) port \d+ \w+(?:: (?P<keytype>\S+) (?P<key>\S+))?' }
+where = { any = [ { user = { not_in = "@ssh_users" } }, { key = { not_in = "@ssh_keys" } } ] }
+aggregate = { group_by = ["user", "ip", "key"] }
+[[rule.test]]
+ident = "sshd-session"
+message = "Accepted publickey for thomas from 10.8.1.5 port 51514 ssh2: ED25519 SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"
+expect = false
+[[rule.test]]
+ident = "sshd-session"
+message = "Accepted publickey for thomas from 10.8.1.5 port 51514 ssh2: ED25519 SHA256:AAAAotherkeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+expect = true
+[[rule.test]]
+ident = "sshd"
+message = "Accepted publickey for deploy from 1.2.3.4 port 51514 ssh2: RSA SHA256:1kNSL+YMFb7AdNGa6WdxNOE4EDsswxsIUrki5Eau7TY"
+expect = true
+
+[[rule]]
+id = "ssh.new_source"
+source = "journal"
+severity = "low"
+title = "SSH login for {user} from new address {ip}"
+description = "First login from this address in 90 days (outside the trusted networks)."
+match = { ident = ["sshd", "sshd-session"], message = '^Accepted \S+ for (?P<user>\S+) from (?P<ip>\S+) port' }
+where = { all = [ { ip = { not_cidr = "@trusted_networks" } } ] }
+aggregate = { group_by = ["ip"] }
+new_value_of = "ip"
+[[rule.test]]
+line = "sshd-session: Accepted publickey for thomas from 2a02:3030:a1e:27c3::3 port 4 ssh2: ED25519 SHA256:x"
+expect = true
+[[rule.test]]
+line = "sshd-session: Accepted publickey for thomas from 10.8.1.5 port 4 ssh2: ED25519 SHA256:x"
+expect = false
+
+[[rule]]
+id = "ssh.login"
+source = "journal"
+kind = "stat"
+title = "SSH logins (user | ip)"
+match = { ident = ["sshd", "sshd-session"], message = '^Accepted \S+ for (?P<user>\S+) from (?P<ip>\S+) port' }
+aggregate = { group_by = ["user", "ip"] }
+
+[[rule]]
+id = "ssh.failed_auth"
+source = "journal"
+kind = "stat"
+title = "SSH failed authentication (by IP, ≥5)"
+match = { ident = ["sshd", "sshd-session"], message = '^(?:Invalid user|Failed (?:password|publickey|none|keyboard-interactive\S*) for|Disconnected from (?:authenticating|invalid) user|Connection (?:closed|reset) by (?:authenticating|invalid) user)\b.*?(?P<ip>[0-9a-fA-F.:]{7,}) port \d+' }
+aggregate = { group_by = ["ip"], threshold = 5 }
+[[rule.test]]
+line = "sshd-session: Invalid user admin from 193.32.162.10 port 40998"
+expect = true
+[[rule.test]]
+line = "sshd-session: Disconnected from authenticating user root 80.94.95.115 port 21512 [preauth]"
+expect = true
+[[rule.test]]
+line = "sshd-session: Connection closed by invalid user  183.66.17.82 port 56710 [preauth]"
+expect = true
+
+[[rule]]
+id = "noise.sshd"
+source = "journal"
+kind = "ignore"
+match = { ident = ["sshd", "sshd-session"], message = '^(?:Received disconnect from|Disconnected from user|banner exchange:|error: kex_exchange_identification|Connection (?:closed|reset) by|Read error from remote host|Timeout before authentication|syslogin_perform_logout|pam_unix\(sshd:session\)|error: kex_protocol_error|Unable to negotiate|Server listening|Received signal|.*\[preauth\]$)' }
+[[rule.test]]
+line = "sshd-session: Received disconnect from 1.2.3.4 port 5:11: Bye Bye [preauth]"
+expect = true
+
+# ---------------------------------------------------------------------------------------
+# sudo / su / pkexec
+# ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "sudo.failure"
+source = "journal"
+severity = "medium"
+title = "sudo: {n} incorrect password attempt(s) by {user}"
+match = { ident = ["sudo"], message = '^\s*(?P<user>\S+) : (?P<n>\d+) incorrect password attempts?' }
+aggregate = { group_by = ["user"] }
+[[rule.test]]
+line = "sudo: thomas : 1 incorrect password attempt ; TTY=pts/10 ; PWD=/var/opt/services/gmc-v2 ; USER=root ; COMMAND=/usr/bin/vim docker-compose.yaml"
+expect = true
+
+[[rule]]
+id = "sudo.not_allowed"
+source = "journal"
+severity = "high"
+title = "sudo refused for {user}"
+description = "Someone without sudo rights tried to use it."
+match = { ident = ["sudo"], message = '^\s*(?P<user>\S+) : .*(?:user NOT in sudoers|command not allowed|user NOT authorized on host)' }
+aggregate = { group_by = ["user"] }
+[[rule.test]]
+line = "sudo: www-data : user NOT in sudoers ; TTY=pts/1 ; PWD=/ ; USER=root ; COMMAND=/bin/sh"
+expect = true
+
+[[rule]]
+id = "sudo.foreign_user"
+source = "journal"
+severity = "high"
+title = "sudo used by unexpected user {user}"
+description = "A user outside @sudo_users ran sudo."
+match = { ident = ["sudo"], message = '^\s*(?P<user>\S+) : (?:.*; )?TTY=' }
+where = { all = [ { user = { not_in = "@sudo_users" } } ] }
+aggregate = { group_by = ["user"] }
+[[rule.test]]
+line = "sudo: thomas : TTY=pts/7 ; PWD=/home/thomas ; USER=root ; COMMAND=/usr/bin/true"
+expect = false
+[[rule.test]]
+line = "sudo: mallory : TTY=pts/7 ; PWD=/home/mallory ; USER=root ; COMMAND=/usr/bin/id"
+expect = true
+
+[[rule]]
+id = "sudo.command"
+source = "journal"
+kind = "stat"
+title = "sudo commands"
+match = { ident = ["sudo"], message = '^\s*(?P<user>\S+) : TTY=\S+ ; PWD=.*? ; USER=(?P<runas>\S+) ; COMMAND=(?P<command>.*)$' }
+aggregate = { group_by = ["user", "command"] }
+
+[[rule]]
+id = "noise.sudo"
+source = "journal"
+kind = "ignore"
+match = { ident = ["sudo"], message = '^pam_unix\(sudo:(?:session|auth)\)' }
+
+[[rule]]
+id = "auth.su"
+source = "journal"
+severity = "medium"
+title = "su session: {msg}"
+match = { ident = ["su"], message = '^(?P<msg>\(to \S+\) \S+ on \S+|FAILED SU .*)$' }
+aggregate = { group_by = ["msg"] }
+[[rule.test]]
+line = "su: (to thomas) root on pts/13"
+expect = true
+
+[[rule]]
+id = "auth.pkexec"
+source = "journal"
+severity = "medium"
+title = "pkexec: {message}"
+match = { ident = ["pkexec", "polkitd"], message = '(?i)(?:executing command|not authorized|authentication failure|Operator of unix-session)' }
+aggregate = { group_by = ["message"] }
+
+[[rule]]
+id = "noise.su"
+source = "journal"
+kind = "ignore"
+match = { ident = ["su"], message = '^pam_unix\(su(?:-l)?:session\)' }
+
+# ---------------------------------------------------------------------------------------
+# Accounts, groups, cron
+# ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "account.priv_group"
+source = "journal"
+severity = "high"
+title = "Added to privileged group {group}: {message}"
+description = "A user was added to a group that grants root-equivalent or log access (@priv_groups)."
+match = { ident = ["usermod", "gpasswd", "useradd", "adduser"], message = '''(?:add '[^']+' to (?:shadow )?group '|added by \S+ to group |to group `)(?P<group>[^'`\s]+)''' }
+where = { all = [ { group = { in = "@priv_groups" } } ] }
+aggregate = { group_by = ["message"] }
+[[rule.test]]
+line = "usermod: add 'thomas' to group 'ntfy-senders'"
+expect = true
+[[rule.test]]
+line = "usermod: add 'thomas' to group 'video'"
+expect = false
+[[rule.test]]
+line = "gpasswd: user www-data added by root to group docker"
+expect = true
+
+[[rule]]
+id = "account.change"
+source = "journal"
+severity = "medium"
+title = "Account database changed ({ident})"
+description = "Users or groups were added, removed or modified."
+match = { ident = ["useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod", "gpasswd", "passwd", "chpasswd", "chage", "chsh", "chfn", "adduser", "deluser", "newusers"] }
+aggregate = { group_by = ["ident"] }
+[[rule.test]]
+line = "useradd: new user: name=unbound, UID=110, GID=113, home=/var/lib/unbound, shell=/usr/sbin/nologin, from=/dev/pts/4"
+expect = true
+
+[[rule]]
+id = "cron.edit"
+source = "journal"
+severity = "medium"
+title = "crontab of {user} changed ({action})"
+match = { ident = ["crontab", "cron", "CRON"], message = '^\((?P<user>[^)]+)\) (?P<action>REPLACE|DELETE) ' }
+aggregate = { group_by = ["user", "action"] }
+[[rule.test]]
+line = "crontab: (root) REPLACE (root)"
+expect = true
+[[rule.test]]
+line = "crontab: (root) BEGIN EDIT (root)"
+expect = false

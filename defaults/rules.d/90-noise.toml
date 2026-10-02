@@ -1,0 +1,47 @@
+# Known noise. `ignore` rules only remove events from the LLM residue (they never hide alerts:
+# an event that also matches an alert/stat rule is still reported by that rule).
+# Keep these narrow; anything at warning priority or worse should usually stay visible.
+
+[[rule]]
+id = "noise.nginx_trusted"
+source = "nginx"
+kind = "ignore"
+description = "Requests from our own networks (VPN dashboards, health checks, the host itself)."
+match = { trusted = true }
+
+[[rule]]
+id = "noise.nginx_static"
+source = "nginx"
+kind = "ignore"
+description = "Successful static asset requests."
+match = { status = ["2xx", "304"], path = '(?:\.(?:css|js|mjs|map|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|eot|mp4|webm)$|^/_next/static/|^/wp-content/(?:themes|plugins)/.*\.(?:css|js)$|^/wp-includes/)' }
+
+[[rule]]
+id = "noise.journal_chatty_services"
+source = "journal"
+kind = "ignore"
+description = "Info/debug chatter from our own services."
+match = { priority = ">=6", ident = [
+  "ntfy", "ntfy-dispatcher", "cvz-ping-notify", "lynis", "borgmatic", "containerd", "dockerd",
+  "glances", "goaccess", "unbound", "wg-quick", "rkhunter", "chkrootkit", "logscan",
+  "mbsync", "mail-sync", "crowdsec", "crowdsec-firewall-bouncer", "unattended-upgrade",
+  "chandelier", "cvz-chat", "systemd-logind", "systemd-timesyncd",
+] }
+
+[[rule]]
+id = "noise.systemd_lifecycle"
+source = "journal"
+kind = "ignore"
+match = { ident = ["systemd", "(sd-exec-", "systemd-ssh-generator"], priority = ">=5", message = '^(?:Started|Starting|Stopped|Stopping|Finished|Deactivated successfully|Consumed|Reloading|Reloaded|Listening on|Closed|Created slice|Removed slice|Reached target|Stopped target|Queued start job|.*: Succeeded\.|New session|Session \d+ logged out|Removed session|Startup finished|.*\.timer: )' }
+
+[[rule]]
+id = "noise.cron_sessions"
+source = "journal"
+kind = "ignore"
+match = { ident = ["CRON", "cron"], message = '^(?:pam_unix\(cron:session\)|\(\S+\) CMD |\(\S+\) (?:BEGIN|END) EDIT)' }
+
+[[rule]]
+id = "noise.kernel_net"
+source = "journal"
+kind = "ignore"
+match = { kernel = true, message = '^(?:docker\d+|br-\w+|veth\w+): |^(?:docker\d+|br-\w+): port \d+\(veth\w*\) entered|^IPv6: ADDRCONF|^kauditd_printk_skb' }
