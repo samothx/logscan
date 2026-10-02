@@ -23,8 +23,10 @@ static IP_CANDIDATE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9A-Fa-f:
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+").unwrap());
 static BEARER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}").unwrap());
 static LONG_TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9_-]{32,}").unwrap());
+// Values under 8 chars stay visible: `token=bmip` (a constant in page JS) is context, not a secret,
+// and masking it made the model see an "authenticated session".
 static SECRET_PARAM: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b((?:access_|refresh_|id_)?token|key|apikey|api_key|password|passwd|pwd|secret|auth|code|session|sessionid|sig|signature|jwt|otp|hash|nonce)=([^&\s]*)").unwrap()
+    Regex::new(r"(?i)\b((?:access_|refresh_|id_)?token|key|apikey|api_key|password|passwd|pwd|secret|auth|code|session|sessionid|sig|signature|jwt|otp|hash|nonce)=([^&\s]{8,})").unwrap()
 });
 static ALIAS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(?:ip|vpn)-\d+\b").unwrap());
 
@@ -430,6 +432,7 @@ mod tests {
         assert!(t.contains("token=<REDACTED>") && t.contains("user=<EMAIL>") && t.contains("Bearer <REDACTED>"), "{t}");
         assert_eq!(r.text("at 14:17:22 version 1.4.6"), "at 14:17:22 version 1.4.6");
         assert_eq!(r.text("Chrome/120.0.0.0 Safari"), "Chrome/120.0.0.0 Safari");
+        assert_eq!(r.text("?action=bmip_keepalive&token=bmip&f=refresh"), "?action=bmip_keepalive&token=bmip&f=refresh");
     }
 
     #[test]
