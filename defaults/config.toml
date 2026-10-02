@@ -60,8 +60,21 @@ min_severity = "high"                # high + critical push to alert_security
 digest = true                        # one low-priority summary per run
 repeat_suppress_days = 7
 
+# Mail the full Markdown report, but only when there is something to report:
+# a finding ≥ min_severity not mailed in the last repeat_days, an AI skill that isn't
+# "clean", or errors. Quiet days send nothing (the ntfy digest still arrives).
+[email]
+enabled = true
+to = ["webmaster@etnur.net"]
+from = "webmaster@etnur.net"         # the Zoho relay only accepts this as From:/envelope
+sendmail = "/usr/sbin/sendmail"      # msmtp → msmtpd (127.0.0.1:25) → Zoho
+min_severity = "medium"
+repeat_days = 7
+on_llm_suspicion = true
+on_errors = true
+
 [llm]
-enabled = false                      # set true once /etc/logscan/llm-api-key exists
+enabled = false                     # set true once /etc/logscan/llm-api-key exists
 provider = "venice"
 base_url = "https://api.venice.ai/api/v1"
 model = "deepseek-v4-flash"          # verify with `logscan llm-check`

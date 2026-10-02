@@ -60,7 +60,7 @@ pub fn alert_message(host: &str, alerts: &[&Finding], report_path: &str) -> Mess
     }
 }
 
-pub fn digest_message(r: &Report, report_path: &str) -> Message {
+pub fn digest_message(r: &Report, report_path: &str, mailed_to: Option<&str>) -> Message {
     let mut body = format!(
         "critical {} · high {} · medium {} · low {}\n",
         r.count_at(Severity::Critical),
@@ -89,6 +89,9 @@ pub fn digest_message(r: &Report, report_path: &str) -> Message {
         body.push_str(&format!("\n{} error(s), see report\n", r.errors.len()));
     }
     body.push_str(&format!("\nReport: {report_path}"));
+    if let Some(to) = mailed_to {
+        body.push_str(&format!("\nFull report mailed to {to}"));
+    }
     Message {
         event: EVENT_DIGEST,
         title: format!("{}: daily log scan", r.host),

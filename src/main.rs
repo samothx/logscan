@@ -13,7 +13,7 @@ use logscan::state::State;
 use logscan::datasets::{Ctx, Redactor};
 use logscan::llm::Client;
 use logscan::skills::{self, Skill};
-use logscan::{notify, report};
+use logscan::{mail, notify, report};
 
 /// Daily security review of the journal and nginx access logs: declarative rules + LLM skills.
 #[derive(Parser)]
@@ -63,6 +63,12 @@ enum Cmd {
     },
     /// Verify the LLM API key, list models and make a tiny test call
     LlmCheck,
+    /// Mail a stored report now (regardless of content), using the [email] settings
+    Mail {
+        /// "latest" or a report file name stem like 2026-10-02_0715
+        #[arg(default_value = "latest")]
+        which: String,
+    },
     /// Print the latest stored report
     Show {
         /// "latest" or a report file name stem like 2026-10-02_0715
@@ -138,6 +144,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Rules { cmd } => cmd_rules(&cfg, cmd),
         Cmd::Skills { cmd } => cmd_skills(&cfg, cmd),
         Cmd::LlmCheck => cmd_llm_check(&cfg),
+        Cmd::Mail { which } => {
+            let dir = cfg.general.state_dir.join("reports");
+            let md_path = dir.join(format!("{which}.md"));
+            let md = std::fs::read_to_string(&md_path).with_context(|| format!("reading {}", md_path.display()))?;
+            let rep: logscan::model::Report = serde_json::from_slice(
+                &std::fs::read(dir.join(format!("{which}.json"))).context("reading the report's .json")?,
+            )?;
+            if cfg.email.to.is_empty() || cfg.email.from.is_empty() {
+                bail!("set email.to and email.from in the config");
+            }
+            let d = mail::Decision { send: true, reasons: vec!["sent by hand (logscan mail)".into()], fingerprints: Vec::new() };
+            let intro = format!("Sent by hand: {}", md_path.display());
+            mail::send(&cfg.email, &mail::build_message(&cfg.email, &mail::subject(&rep, &d), &intro, &md))?;
+            println!("mailed {} to {}", md_path.display(), cfg.email.to.join(", "));
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Show { which } => {
             let p = cfg.general.state_dir.join("reports").join(format!("{which}.md"));
             print!("{}", std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?);
@@ -225,6 +247,14 @@ fn cmd_run(cfg: &Config, since: Option<&str>, until: Option<&str>, no_llm: bool,
         for a in alerts {
             eprintln!("  would push: {}", truncate(&a, 200));
         }
+        if cfg.email.enabled {
+            let d = mail::decide(&result.report, &cfg.email, &state, now.timestamp());
+            if d.send {
+                eprintln!("  would email to {}: {}", cfg.email.to.join(", "), d.reasons.join("; "));
+            } else {
+                eprintln!("  no email: nothing new ≥ {}", cfg.email.min_severity);
+            }
+        }
         return Ok(if fatal { ExitCode::from(2) } else { ExitCode::SUCCESS });
     }
 
@@ -232,8 +262,35 @@ fn cmd_run(cfg: &Config, since: Option<&str>, until: Option<&str>, no_llm: bool,
         notify::select_alerts(&mut result.report, &cfg.notify, &state, now.timestamp()).into_iter().cloned().collect();
     let path = report::store(&result.report, state_dir)?;
     let path_s = path.display().to_string();
+    let markdown = report::render_markdown(&result.report);
     if print {
-        print!("{}", report::render_markdown(&result.report));
+        print!("{markdown}");
+    }
+
+    // Mail the report only when there is something to report.
+    let mut mailed_to = None;
+    let mut mail_error = None;
+    if cfg.email.enabled {
+        let d = mail::decide(&result.report, &cfg.email, &state, now.timestamp());
+        if d.send {
+            let intro = format!("Why this mail: {}.\nReport file on {}: {path_s}", d.reasons.join("; "), host);
+            let msg = mail::build_message(&cfg.email, &mail::subject(&result.report, &d), &intro, &markdown);
+            match mail::send(&cfg.email, &msg) {
+                Ok(()) => {
+                    for fp in &d.fingerprints {
+                        state.emailed.insert(fp.clone(), now.timestamp());
+                    }
+                    mailed_to = Some(cfg.email.to.join(", "));
+                }
+                Err(e) => {
+                    eprintln!("logscan: mail failed: {e:#}");
+                    mail_error = Some(format!("mail: {e:#}"));
+                }
+            }
+        }
+    }
+    if let Some(e) = mail_error {
+        result.report.errors.push(e);
     }
 
     if cfg.notify.enabled {
@@ -250,7 +307,7 @@ fn cmd_run(cfg: &Config, since: Option<&str>, until: Option<&str>, no_llm: bool,
             }
         }
         if cfg.notify.digest
-            && let Err(e) = notify::send(&cfg.notify, &notify::digest_message(&result.report, &path_s))
+            && let Err(e) = notify::send(&cfg.notify, &notify::digest_message(&result.report, &path_s, mailed_to.as_deref()))
         {
             push_errors.push(format!("{e:#}"));
         }
@@ -267,17 +324,19 @@ fn cmd_run(cfg: &Config, since: Option<&str>, until: Option<&str>, no_llm: bool,
         state.last_until = Some(win.until);
     }
     let rules_ref = &rules;
-    state.prune(now.timestamp(), cfg.notify.repeat_suppress_days, |id| {
+    state.prune(now.timestamp(), cfg.notify.repeat_suppress_days, cfg.email.repeat_days, |id| {
         rules_ref.get(id).map(|r| r.remember_days).unwrap_or(90)
     });
     state.save(state_dir)?;
     report::prune(state_dir, cfg.general.report_retention_days);
 
     eprintln!(
-        "logscan: {} findings (max {}), {} pushed, report {}",
+        "logscan: {} findings (max {}), {} alert(s) {}, {}, report {}",
         result.report.findings.len(),
         result.report.max_severity().map(|s| s.to_string()).unwrap_or_else(|| "none".into()),
         alerts.len(),
+        if cfg.notify.enabled { "pushed" } else { "(ntfy disabled)" },
+        mailed_to.as_deref().map(|t| format!("mailed to {t}")).unwrap_or_else(|| "no mail".into()),
         path_s
     );
     Ok(if fatal { ExitCode::from(2) } else { ExitCode::SUCCESS })

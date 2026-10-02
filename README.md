@@ -21,6 +21,7 @@ logscan run   (systemd timer, daily 07:15)
   skills   each enabled, due skill → one LLM call over its datasets → [AI] findings (≤ high)
   report   /var/lib/logscan/reports/<YYYY-MM-DD_HHMM>.{md,json}, latest.{md,json}
   notify   logscan.alert (≥ high, 7-day repeat suppression) · logscan.digest · logscan.error
+  email    the full Markdown report, only when there is something new to report
 ```
 
 LLM output can only **add** findings. It can't hide or downgrade a rule finding, so a prompt
@@ -35,6 +36,7 @@ run [--since 24h|7d|2026-10-01|RFC3339] [--until …] [--no-llm] [--dry-run] [--
 rules list | check | test <id> --line '<log line>' [--trusted true|false] [--priority N]
 skills list | check | run <name> [--since 24h] [--show-prompt]
 llm-check                     # key, model list, test call, verdict parsing
+mail [latest|2026-10-02_0715] # mail a stored report now (tests the [email] settings)
 show [latest|2026-10-02_0715]
 ```
 
@@ -172,6 +174,18 @@ venice_parameters = { include_venice_system_prompt = false, strip_thinking_respo
 base_url = "https://api.deepseek.com"
 model = "deepseek-flash"
 ```
+
+## Email
+
+`[email]` mails the Markdown report (text/plain, quoted-printable) through `sendmail`.
+It only sends when there is something to report:
+- a finding ≥ `min_severity` (default medium) that wasn't in a mail within `repeat_days` (7);
+- an LLM skill whose assessment isn't `clean` (`on_llm_suspicion`);
+- errors during the run (`on_errors`).
+
+Quiet days send nothing; the ntfy digest still arrives and says when a report was mailed.
+`from` is used as both the envelope sender and the `From:` header. Relays such as Zoho reject
+mail whose header doesn't match the account.
 
 ## Install
 

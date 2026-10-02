@@ -21,6 +21,7 @@ pub struct Config {
     pub lists: BTreeMap<String, Vec<String>>,
     pub sources: Sources,
     pub notify: Notify,
+    pub email: Email,
     pub llm: Llm,
     #[serde(skip)]
     pub trusted: Vec<IpNet>,
@@ -97,6 +98,39 @@ impl Default for Notify {
             min_severity: Severity::High,
             digest: true,
             repeat_suppress_days: 7,
+        }
+    }
+}
+
+/// Mails the Markdown report, but only when there is something to report.
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Email {
+    pub enabled: bool,
+    pub to: Vec<String>,
+    /// Envelope sender and From: header. Must be an address the relay accepts.
+    pub from: String,
+    pub sendmail: PathBuf,
+    /// A finding at or above this severity, not mailed within `repeat_days`, triggers a mail.
+    pub min_severity: Severity,
+    pub repeat_days: u32,
+    /// Also mail when an LLM skill's assessment isn't "clean".
+    pub on_llm_suspicion: bool,
+    /// Also mail when the run had errors.
+    pub on_errors: bool,
+}
+
+impl Default for Email {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            to: Vec::new(),
+            from: String::new(),
+            sendmail: PathBuf::from("/usr/sbin/sendmail"),
+            min_severity: Severity::Medium,
+            repeat_days: 7,
+            on_llm_suspicion: true,
+            on_errors: true,
         }
     }
 }
@@ -194,6 +228,9 @@ impl Config {
             })
             .transpose()?
             .unwrap_or_default();
+        if cfg.email.enabled && (cfg.email.to.is_empty() || !cfg.email.from.contains('@')) {
+            bail!("email.enabled requires email.to and email.from");
+        }
         if cfg.llm.enabled && (cfg.llm.base_url.is_empty() || cfg.llm.model.is_empty()) {
             bail!("llm.enabled requires llm.base_url and llm.model");
         }

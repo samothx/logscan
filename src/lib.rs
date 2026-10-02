@@ -11,3 +11,4 @@ pub mod scan;
 pub mod datasets;
 pub mod llm;
 pub mod skills;
+pub mod mail;
