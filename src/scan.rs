@@ -73,11 +73,18 @@ pub fn scan(cfg: &Config, rules: &RuleSet, state: &mut State, win: &Window, lear
         match sources::read_text_file(f, win.since) {
             Ok(Some((mtime, lines))) => {
                 for l in lines {
+                    // Dated lines (dpkg.log) are windowed individually; undated reports
+                    // (rkhunter, chkrootkit) count as a whole when the file changed in the window.
+                    if let Some(t) = l.ts
+                        && (t < win.since || t >= win.until)
+                    {
+                        continue;
+                    }
                     engine.feed(Event::File(FileLine {
                         file: f.display().to_string(),
                         line: l.line,
                         context: l.context,
-                        ts: mtime,
+                        ts: l.ts.unwrap_or(mtime),
                     }));
                 }
             }

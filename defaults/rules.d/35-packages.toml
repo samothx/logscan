@@ -1,0 +1,69 @@
+# Package changes from /var/log/dpkg.log. Each line carries its own timestamp, so only changes
+# inside the window are seen. (dpkg.log rotates monthly; changes right before a rotation that the
+# scan hasn't seen yet are in dpkg.log.1 and missed.)
+# Line format: "2026-10-01 06:44:06 install unbound:amd64 <none> 1.26.1-0+deb13u1"
+
+[patterns]
+dpkg_action = '''^\S+ \S+ (?P<action>install|remove|purge|upgrade) (?P<package>[^:\s]+)(?::\S+)? (?P<old>\S+) (?P<version>\S+)$'''
+# Offensive tooling, tunnels and miners: what an intruder installs after getting in.
+attack_tools = '''^(?:nmap|ncat|masscan|zmap|hydra|john|hashcat|sqlmap|nikto|wpscan|socat|netcat-traditional|proxychains4?|proxychains-ng|tor|torsocks|sshpass|aircrack-ng|metasploit-framework|responder|chisel|ngrok|gost|frp[cs]?|dsniff|ettercap-\S+|xmrig|cpuminer|minerd|hping3|medusa|ncrack|thc-\S+)$'''
+
+[[rule]]
+id = "pkg.attack_tool_installed"
+source = "file:/var/log/dpkg.log"
+severity = "high"
+title = "Offensive/tunnel tool installed: {package} {version}"
+description = "A scanner, password cracker, tunnel or miner was installed. If nobody on the team did this, treat the host as compromised."
+match = { line = "{{dpkg_action}}" }
+where = { all = [ { action = ["install"] }, { package = "{{attack_tools}}" } ] }
+aggregate = { group_by = ["package"] }
+[[rule.test]]
+line = "2026-10-02 03:12:44 install socat:amd64 <none> 1.8.0.3-1"
+expect = true
+[[rule.test]]
+line = "2026-10-02 03:12:44 install unbound:amd64 <none> 1.26.1-0+deb13u1"
+expect = false
+[[rule.test]]
+line = "2026-10-02 03:12:44 upgrade tor:amd64 0.4.8.16-1 0.4.8.17-1"
+expect = false
+
+[[rule]]
+id = "pkg.installed"
+source = "file:/var/log/dpkg.log"
+severity = "medium"
+title = "Packages installed"
+description = "New packages (not upgrades). Usually an admin; check that someone on the team did it."
+match = { line = "{{dpkg_action}}" }
+where = { all = [ { action = ["install"] } ] }
+collect = ["package"]
+[[rule.test]]
+line = "2026-10-01 06:44:06 install wireguard-tools:amd64 <none> 1.0.20210914-3"
+expect = true
+[[rule.test]]
+line = "2026-10-01 06:44:06 status installed wireguard-tools:amd64 1.0.20210914-3"
+expect = false
+
+[[rule]]
+id = "pkg.removed"
+source = "file:/var/log/dpkg.log"
+severity = "medium"
+title = "Packages removed"
+description = "Removed or purged packages. Watch for security tooling being removed (crowdsec, auditd, rkhunter, …)."
+match = { line = "{{dpkg_action}}" }
+where = { all = [ { action = ["remove", "purge"] } ] }
+collect = ["package"]
+[[rule.test]]
+line = "2026-10-02 16:37:10 purge exim4-base:amd64 4.98.2-1+deb13u5 <none>"
+expect = true
+
+[[rule]]
+id = "pkg.upgraded"
+source = "file:/var/log/dpkg.log"
+kind = "stat"
+title = "Packages upgraded"
+match = { line = "{{dpkg_action}}" }
+where = { all = [ { action = ["upgrade"] } ] }
+aggregate = { group_by = ["package"] }
+[[rule.test]]
+line = "2026-10-01 06:44:06 upgrade openssl:amd64 3.5.7-1~deb13u2 3.5.7-1~deb13u3"
+expect = true

@@ -15,9 +15,11 @@
 #   --no-first-run        don't run logscan once at the end (still enables the timer)
 #   --bin PATH            binary to install (default: ./logscan from the bundle)
 #
-# A new /etc/logscan/config.toml is generated with `logscan init` from the host itself. An existing
-# config, and locally edited rules/skills, are never overwritten: the shipped version is written
-# next to them as *.new.
+# A new /etc/logscan/config.toml is generated with `logscan init` from the host itself; an existing
+# config is never touched. Rules/skills that are an unmodified older shipped version (checked against
+# shipped-hashes.txt) are upgraded; locally edited ones are kept and the new version lands next to
+# them as *.new. --local-rules files come from your own repo and are always installed.
+# Replaced files are backed up to /var/backups/logscan-<stamp>/.
 #
 set -euo pipefail
 
@@ -55,17 +57,31 @@ for d in "$HERE/defaults/rules.d" "$HERE/defaults/skills.d" "$HERE/systemd"; do
 done
 
 backup() { [ -e "$1" ] && cp -a "$1" "$1.orig-$STAMP" && echo "  backup: $1.orig-$STAMP"; return 0; }
+BACKUPS="/var/backups/logscan-$STAMP"
+stash() {  # stash FILE: copy to the backup dir before replacing it
+  install -d -m 0700 "$BACKUPS"; cp -a "$1" "$BACKUPS/"
+}
 
-# install_keep SRC DST: install a config file, never overwriting local edits.
-install_keep() {
+# install_shipped SRC DST REL: upgrade unmodified shipped files, keep local edits (new version → *.new).
+install_shipped() {
   if [ ! -e "$2" ]; then
     install -o root -g root -m 0644 "$1" "$2"; echo "  installed $2"
   elif cmp -s "$1" "$2"; then
     echo "  unchanged $2"
+  elif [ -f "$HERE/shipped-hashes.txt" ] \
+       && grep -qxF "$(sha256sum < "$2" | cut -d' ' -f1)  $3" "$HERE/shipped-hashes.txt"; then
+    stash "$2"; install -o root -g root -m 0644 "$1" "$2"; echo "  upgraded $2"
   else
     install -o root -g root -m 0644 "$1" "$2.new"
-    echo "  KEPT local $2 (shipped version: $2.new — diff and merge by hand)"
+    echo "  KEPT locally edited $2 (shipped version: $2.new — diff and merge by hand)"
   fi
+}
+
+# install_local SRC DST: host files from your own repo are authoritative.
+install_local() {
+  if [ -e "$2" ] && cmp -s "$1" "$2"; then echo "  unchanged $2"; return; fi
+  [ -e "$2" ] && stash "$2"
+  install -o root -g root -m 0644 "$1" "$2"; echo "  installed $2 (local)"
 }
 
 echo "=== logscan install on $(hostname) ($("$BIN" --version)) ==="
@@ -84,7 +100,7 @@ usermod -aG "$(IFS=,; echo "${GROUPS_PRESENT[*]}")" logscan
 echo "  logscan groups: $(id -nG logscan)"
 
 # --- binary + docs ----------------------------------------------------------------------
-backup /usr/local/bin/logscan
+[ -e /usr/local/bin/logscan ] && stash /usr/local/bin/logscan
 install -o root -g root -m 0755 "$BIN" /usr/local/bin/logscan
 if [ -f "$HERE/README.md" ]; then
   install -d -m 0755 /usr/local/share/doc/logscan
@@ -93,9 +109,9 @@ fi
 
 # --- config, rules, skills ----------------------------------------------------------------
 install -d -o root -g root -m 0755 "$ETC" "$ETC/rules.d" "$ETC/skills.d"
-for f in "$HERE"/defaults/rules.d/*.toml; do install_keep "$f" "$ETC/rules.d/$(basename "$f")"; done
-for f in "$HERE"/defaults/skills.d/*.md;  do install_keep "$f" "$ETC/skills.d/$(basename "$f")"; done
-for f in "${LOCAL_RULES[@]}"; do install_keep "$f" "$ETC/rules.d/$(basename "$f")"; done
+for f in "$HERE"/defaults/rules.d/*.toml; do b="$(basename "$f")"; install_shipped "$f" "$ETC/rules.d/$b" "rules.d/$b"; done
+for f in "$HERE"/defaults/skills.d/*.md;  do b="$(basename "$f")"; install_shipped "$f" "$ETC/skills.d/$b" "skills.d/$b"; done
+for f in "${LOCAL_RULES[@]}"; do install_local "$f" "$ETC/rules.d/$(basename "$f")"; done
 if [ -e "$ETC/config.toml" ]; then
   echo "  kept existing $ETC/config.toml (\`logscan init\` prints a fresh one for comparison)"
 else
@@ -122,7 +138,7 @@ fi
 
 # --- units + host drop-in --------------------------------------------------------------------
 for u in logscan.service logscan.timer; do
-  backup "$UNITS/$u"
+  [ -e "$UNITS/$u" ] && ! cmp -s "$HERE/systemd/$u" "$UNITS/$u" && stash "$UNITS/$u"
   install -o root -g root -m 0644 "$HERE/systemd/$u" "$UNITS/$u"
 done
 HANDLER=""

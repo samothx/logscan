@@ -259,6 +259,17 @@ static SECTION_START: LazyLock<Regex> =
 pub struct TextLine {
     pub line: String,
     pub context: Vec<String>,
+    /// From a leading "YYYY-MM-DD HH:MM:SS" (dpkg.log style); lets the scanner window each line.
+    pub ts: Option<DateTime<Local>>,
+}
+
+static DATE_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})").unwrap());
+
+fn line_ts(l: &str) -> Option<DateTime<Local>> {
+    let c = DATE_PREFIX.captures(l)?;
+    let n = chrono::NaiveDateTime::parse_from_str(&c[1].replace('T', " "), "%Y-%m-%d %H:%M:%S").ok()?;
+    Local.from_local_datetime(&n).earliest()
 }
 
 /// Reads a text file if it was modified at/after `since`. `Ok(None)` = not modified in window.
@@ -294,7 +305,7 @@ pub fn read_text_file(path: &Path, since: DateTime<Local>) -> Result<Option<(Dat
                 break;
             }
         }
-        out.push(TextLine { line: l.trim().to_string(), context });
+        out.push(TextLine { line: l.trim().to_string(), context, ts: line_ts(l) });
     }
     Ok(Some((mtime, out)))
 }
@@ -371,6 +382,13 @@ mod tests {
         assert_eq!(r.status, 400);
         let l = r#"1.2.3.4 - - [02/Oct/2026:00:36:07 +0200] "" 400 0 "-" "-" sn="_""#;
         assert!(parse_access_line(l).is_some());
+    }
+
+    #[test]
+    fn dated_lines_get_a_timestamp() {
+        let t = line_ts("2026-10-01 06:44:06 upgrade openssl:amd64 3.5.7-1 3.5.7-2").unwrap();
+        assert_eq!(t.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-10-01 06:44:06");
+        assert!(line_ts("[06:25:54] Warning: x").is_none());
     }
 
     #[test]
