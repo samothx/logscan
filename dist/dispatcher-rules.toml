@@ -1,0 +1,26 @@
+
+# --- logscan (appended by logscan install.sh) -------------------------------
+# logscan passes --priority itself (critical → 5, high → 4); the rule value is the default.
+[[rules]]
+id = "logscan_alert"
+match_event = "logscan.alert"
+topic = "alert_security"
+priority = 4
+tags = ["shield", "rotating_light"]
+title_prefix = "[SEC]"
+
+[[rules]]
+id = "logscan_digest"
+match_event = "logscan.digest"
+topic = "notify_tasks"
+priority = 2
+tags = ["shield", "memo"]
+title_prefix = "[LOGSCAN]"
+
+[[rules]]
+id = "logscan_error"
+match_event = "logscan.error"
+topic = "alert_services"
+priority = 3
+tags = ["shield", "warning"]
+title_prefix = "[LOG SCANNER]"

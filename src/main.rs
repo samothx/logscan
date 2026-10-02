@@ -63,6 +63,27 @@ enum Cmd {
     },
     /// Verify the LLM API key, list models and make a tiny test call
     LlmCheck,
+    /// Write a starter config for this host (detects networks, SSH keys, sudo users, ntfy, sendmail)
+    Init {
+        /// Extra trusted IP or network (repeatable), e.g. another server of yours
+        #[arg(long, value_name = "CIDR")]
+        trust: Vec<String>,
+        /// User whose authorized_keys are approved (repeatable; default: sudo/wheel members)
+        #[arg(long, value_name = "USER")]
+        ssh_user: Vec<String>,
+        /// Mail recipient (repeatable); enables [email] if /usr/sbin/sendmail exists
+        #[arg(long, value_name = "ADDR")]
+        email_to: Vec<String>,
+        /// Mail sender (default: first recipient)
+        #[arg(long, value_name = "ADDR")]
+        email_from: Option<String>,
+        /// File with the "About this host" text for LLM skills
+        #[arg(long, value_name = "FILE")]
+        host_context: Option<PathBuf>,
+        /// Write here instead of stdout; refuses to overwrite an existing file
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
     /// Mail a stored report now (regardless of content), using the [email] settings
     Mail {
         /// "latest" or a report file name stem like 2026-10-02_0715
@@ -136,11 +157,39 @@ fn load_config(cli: &Cli) -> Result<Config> {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    if let Cmd::Init { trust, ssh_user, email_to, email_from, host_context, output } = &cli.command {
+        let host_context = host_context
+            .as_ref()
+            .map(|p| std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display())))
+            .transpose()?;
+        let (text, detected) = logscan::init::generate(&logscan::init::Options {
+            trust: trust.clone(),
+            ssh_users: ssh_user.clone(),
+            email_to: email_to.clone(),
+            email_from: email_from.clone(),
+            host_context,
+        })?;
+        match output {
+            Some(p) => {
+                if p.exists() {
+                    bail!("{} exists; not overwriting (remove it or write elsewhere)", p.display());
+                }
+                std::fs::write(p, &text).with_context(|| format!("writing {}", p.display()))?;
+                eprintln!("wrote {}", p.display());
+            }
+            None => print!("{text}"),
+        }
+        for n in detected.notes {
+            eprintln!("note: {n}");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let cfg = load_config(&cli)?;
     match &cli.command {
         Cmd::Run { since, until, no_llm, dry_run, print } => {
             cmd_run(&cfg, since.as_deref(), until.as_deref(), *no_llm, *dry_run, *print)
         }
+        Cmd::Init { .. } => unreachable!("handled above"),
         Cmd::Rules { cmd } => cmd_rules(&cfg, cmd),
         Cmd::Skills { cmd } => cmd_skills(&cfg, cmd),
         Cmd::LlmCheck => cmd_llm_check(&cfg),
@@ -452,7 +501,7 @@ fn run_llm(cfg: &Config, result: &mut scan::ScanResult, state: &mut State, win: 
                 errors.push(format!("skill {}: skipped, llm.max_total_chars used up", skill.name));
                 continue;
             }
-            let prompt = match skills::build_prompt(skill, &ctx, &mut red, win.since, win.until, budget) {
+            let prompt = match skills::build_prompt(skill, &ctx, &mut red, &cfg.llm.host_context, win.since, win.until, budget) {
                 Ok(p) => p,
                 Err(e) => {
                     errors.push(format!("skill {}: {e:#}", skill.name));
@@ -520,7 +569,7 @@ fn cmd_skills(cfg: &Config, cmd: &SkillsCmd) -> Result<ExitCode> {
             if *show_prompt {
                 let mut red = Redactor::new(cfg);
                 let ctx = Ctx { events: &result.events, report: &result.report };
-                let p = skills::build_prompt(skill, &ctx, &mut red, win.since, win.until, cfg.llm.max_total_chars)?;
+                let p = skills::build_prompt(skill, &ctx, &mut red, &cfg.llm.host_context, win.since, win.until, cfg.llm.max_total_chars)?;
                 println!("===== SYSTEM =====\n{}\n\n===== USER =====\n{}", p.system, p.user);
                 eprintln!(
                     "skill {}: {} chars total ({} data, ≈{} tokens), model {}{}",

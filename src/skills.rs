@@ -157,7 +157,15 @@ pub struct Prompt {
     pub notes: Vec<String>,
 }
 
-pub fn build_prompt(skill: &Skill, ctx: &Ctx, red: &mut Redactor, since: DateTime<Local>, until: DateTime<Local>, budget: usize) -> Result<Prompt> {
+pub fn build_prompt(
+    skill: &Skill,
+    ctx: &Ctx,
+    red: &mut Redactor,
+    host_context: &str,
+    since: DateTime<Local>,
+    until: DateTime<Local>,
+    budget: usize,
+) -> Result<Prompt> {
     let mut user = String::new();
     let _ = writeln!(user, "# Task: {}\n", skill.name);
     let _ = writeln!(user, "{}\n", skill.instructions);
@@ -168,6 +176,9 @@ pub fn build_prompt(skill: &Skill, ctx: &Ctx, red: &mut Redactor, since: DateTim
         since.format("%Y-%m-%d %H:%M"),
         until.format("%Y-%m-%d %H:%M")
     );
+    if !host_context.trim().is_empty() {
+        let _ = writeln!(user, "## About this host\n\n{}\n", host_context.trim());
+    }
     let cap = skill.max_input_chars.min(budget);
     let per_input = cap / skill.inputs.len().max(1);
     let mut data_chars = 0;

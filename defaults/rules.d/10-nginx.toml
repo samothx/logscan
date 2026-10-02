@@ -12,7 +12,7 @@
 web_attack = '''\.\./|\.\.\\|/etc/(?:passwd|shadow|group|hosts)\b|/proc/self/(?:environ|cmdline|fd)|\bwin\.ini\b|\bboot\.ini\b|\bunion\b[\s/*+]+(?:all[\s/*+]+)?select\b|\b(?:sleep|benchmark|pg_sleep)\s*\(\s*\d|\bwaitfor\s+delay\b|'\s*or\s*'?\d'?\s*=\s*'?\d|\bor\s+1\s*=\s*1\b|<script|javascript:|\bon(?:error|load)\s*=|\$\{jndi:|\$\{\$\{|php://|data://text|expect://|\ballow_url_include\b|\bauto_prepend_file\b|\bbase64_decode\s*\(|\b(?:eval|assert|system|passthru|shell_exec|popen|proc_open)\s*\(|;\s*(?:wget|curl|sh|bash|nc|busybox|chmod)\b|\|\s*(?:sh|bash)\b|\$\((?:wget|curl|id|whoami|cat|uname)\b|`(?:id|whoami|wget|curl|uname)\b|\(\)\s*\{\s*:\s*;\s*\}\s*;|%\{\(#|\bxdebug_session_start\b|\binvokefunction\b|\bcall_user_func_array\b'''
 
 # Files that must never be served with content.
-secret_file = '''/\.env(?:\.[\w.-]+)?$|/\.git/|/\.git-credentials$|/\.svn/|/\.hg/|/\.ssh/|/id_(?:rsa|dsa|ecdsa|ed25519)$|/\.aws/|/\.htpasswd$|/\.npmrc$|/\.pypirc$|/\.docker/config\.json$|/\.kube/config$|/wp-config\.php[.~_-]|/config\.php\.(?:bak|old|save|swp|orig)$|/phpinfo\.php$|/server-status$|/\.ds_store$|/credentials(?:\.json)?$|/secrets?\.(?:ya?ml|json|txt)$|/\.bash_history$|/\.mysql_history$'''
+secret_file = '''/\.env(?:\.[\w.-]+)?$|/\.git/|/\.git-credentials$|/\.svn/|/\.hg/|/\.ssh/|/id_(?:rsa|dsa|ecdsa|ed25519)$|/\.aws/|/\.htpasswd$|/\.npmrc$|/\.pypirc$|/\.docker/config\.json$|/\.kube/config$|/wp-config\.php[.~_-]|/config\.php\.(?:bak|old|save|swp|orig)$|/phpinfo\.php$|/server-status$|/\.ds_store$|/credentials(?:\.json)?$|/secrets?\.(?:ya?ml|json|txt)$|/\.bash_history$|/\.mysql_history$|/storage/logs/[^/]+\.log$'''
 
 backup_file = '''\.(?:sql|sql\.gz|sql\.zst|sql\.bz2|sqlite3?|db|bak|backup|old|orig|save|swp|tar|tar\.gz|tgz|zip|7z|rar|dump)$'''
 
@@ -54,6 +54,9 @@ expect = false
 [[rule.test]]
 line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /environment HTTP/1.1" 200 90 "-" "-" sn="etnur.com"'
 expect = false
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0200] "GET /storage/logs/laravel.log HTTP/1.1" 200 90123 "-" "-" sn="www.kochmonster.de"'
+expect = true
 
 [[rule]]
 id = "nginx.backup_exposed"

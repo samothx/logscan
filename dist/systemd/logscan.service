@@ -1,12 +1,12 @@
 # logscan: daily security review of the journal and nginx logs (rules + optional LLM skills).
-# Runs as the unprivileged system user `logscan`; log access via groups adm + systemd-journal.
+# Runs as the unprivileged system user `logscan`; log access via group adm (+ systemd-journal).
+# Host-specific bits (SupplementaryGroups=, OnFailure=) live in logscan.service.d/10-host.conf,
+# written by install.sh for the groups and failure handler that exist on the host.
 [Unit]
 Description=logscan: security review of journal and nginx logs
 Documentation=file:///usr/local/share/doc/logscan/README.md
 Wants=network-online.target
 After=network-online.target
-# A crash or a journal read failure (exit 2) is reported via ntfy (handler from ai-sysadm 0031).
-OnFailure=ntfy-job-failed@%N.service
 
 [Service]
 Type=oneshot
@@ -14,7 +14,6 @@ ExecStart=/usr/local/bin/logscan --config /etc/logscan/config.toml run
 User=logscan
 # Primary group adm: reports in /var/lib/logscan are readable by adm members (thomas).
 Group=adm
-SupplementaryGroups=systemd-journal ntfy-senders logscan
 StateDirectory=logscan
 StateDirectoryMode=0750
 UMask=0027
@@ -41,5 +40,5 @@ RestrictNamespaces=yes
 LockPersonality=yes
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# ntfy-dispatcher (child process) spools undelivered messages here.
-ReadWritePaths=/var/spool/ntfy-dispatcher
+# ntfy-dispatcher (child process) spools undelivered messages here; "-" = fine if absent.
+ReadWritePaths=-/var/spool/ntfy-dispatcher

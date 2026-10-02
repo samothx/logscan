@@ -86,6 +86,16 @@ max_total_chars = 250000             # all skills of one run together
 json_mode = true
 pseudonymize_ips = true
 max_severity = "high"                # LLM findings never exceed this
+# Added to every skill prompt as "About this host". Describe sites, stacks, admins, what's normal.
+host_context = """
+Debian server anubis.etnur.net. nginx reverse proxy in front of Docker apps: Next.js sites
+(gaylynmorgan.com, etnur.com, converzen.de and their admin backends), three WordPress sites
+(etnur.net, gaylyn.etnur.net, yogamitselina.de), a static site (tele-conference.de), a private
+Docker registry, umami analytics and an ntfy push server. Native services: chandelier (gRPC),
+cvz-chat. VPN-only dashboards under *.services.etnur.net.
+The owner (user thomas) logs in over SSH with public keys, usually from the VPN or home/mobile
+IPv6 addresses, and uses sudo for administration. Password login is disabled.
+"""
 
 [llm.extra_body]
 venice_parameters = { include_venice_system_prompt = false, strip_thinking_response = true }

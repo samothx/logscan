@@ -191,8 +191,31 @@ mail whose header doesn't match the account.
 
 ## Install
 
-`dist/package.sh` builds `target/bundle/logscan-<ver>-x86_64-linux.tar.gz` (static musl binary,
-defaults, units). On anubis the rollout is `~/ai-sysadm/changes/pending/0032-logscan.sh`.
+`dist/package.sh` builds `target/bundle/logscan-<ver>-x86_64-linux.tar.gz`: the static musl
+binary, `install.sh`, default rules/skills, units and ntfy-dispatcher rules. On any host:
 
-The service runs as system user `logscan` with groups `adm` (nginx logs, rkhunter), `systemd-journal`,
-`ntfy-senders` (pushes) and `logscan` (API key file), under a strict sandbox.
+```bash
+tar xzf logscan-*-x86_64-linux.tar.gz && cd logscan-*/
+sudo ./install.sh --ssh-user thomas --email-to ops@example.org --trust 203.0.113.7 \
+                  --host-context about-this-host.txt --local-rules 60-local.toml
+```
+
+`install.sh` is idempotent:
+- **user:** creates the system user `logscan` and adds it to whichever of `adm`, `systemd-journal`,
+  `ntfy-senders` and `msmtp` exist;
+- **config:** generates `/etc/logscan/config.toml` with `logscan init` from the host itself
+  (networks, SSH key fingerprints, sudo users, ntfy and sendmail detection);
+- **files:** installs rules and skills without ever overwriting local edits (the shipped version
+  lands next to them as `*.new`);
+- **notifications:** appends the dispatcher rules if ntfy-dispatcher is configured;
+- **unit:** writes a `logscan.service.d/10-host.conf` drop-in with the groups and failure handler
+  (`ntfy-job-failed@` or `ntfy-unit-failed@`) present on the host;
+- **finally:** runs a dry run, then one real run, and enables the timer.
+
+`logscan init` can also be run on its own to print a config for comparison.
+
+The service runs as `logscan` (primary group `adm`, so `adm` members can read the reports) under a
+strict systemd sandbox.
+
+On anubis the rollout went through `~/ai-sysadm/changes/pending/0032-logscan.sh` (hand-written
+unit and config, predating `install.sh`).

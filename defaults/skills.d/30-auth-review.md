@@ -17,8 +17,8 @@ limit = 250
 dataset = "stats"
 limit = 10
 +++
-The owner (user `thomas`) logs in over SSH with public keys, usually from the VPN (`vpn-*`) or from
-home/mobile IPv6 addresses, and uses sudo for administration. Password login is disabled.
+Who administers this host and how (users, where they log in from) is described under "About this
+host". Addresses of the owner's own networks appear as `vpn-*`.
 
 Look at logins, sudo usage and account changes as a whole:
 
@@ -29,4 +29,5 @@ Look at logins, sudo usage and account changes as a whole:
 - brute force that got further than usual (e.g. a valid username found, or a pre-auth change in pattern);
 - account or group changes that weren't accompanied by an obvious admin session.
 
-Routine admin work by thomas (apt, systemctl, editing configs, running change scripts) is normal.
+Routine admin work by the administrators (apt, systemctl, editing configs, running change scripts)
+is normal.

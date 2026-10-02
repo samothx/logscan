@@ -162,6 +162,9 @@ pub struct Llm {
     pub extra_body: toml::Table,
     /// Severity cap for LLM findings (it has no ground truth; see README).
     pub max_severity: Severity,
+    /// Free text about this host (sites, stacks, who administers it, what is normal),
+    /// added to every skill prompt as "About this host". Keeps skill files host-neutral.
+    pub host_context: String,
 }
 
 impl Default for Llm {
@@ -179,6 +182,7 @@ impl Default for Llm {
             pseudonymize_ips: true,
             extra_body: toml::Table::new(),
             max_severity: Severity::High,
+            host_context: String::new(),
         }
     }
 }

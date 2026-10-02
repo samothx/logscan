@@ -1,0 +1,126 @@
+# PHP application rules: Laravel, Statamic (Laravel-based CMS) and common PHP tooling.
+# Silent on hosts that don't run these. Same fields as 10-nginx.toml.
+
+[patterns]
+# Debug/admin tooling that must never be reachable from outside in production.
+# Statamic CP pages that don't need a login (excluded when detecting a logged-in session).
+statamic_cp_public = '''^/cp/(?:auth/|login|logout|password|forgot|reset|build/|vendor/|svg/)'''
+php_debug_tools = '''^/(?:_ignition/(?:health-check|scripts|styles)|_debugbar/|telescope(?:/|$)|horizon(?:/|$)|clockwork/|__clockwork/|phpinfo\.php$|adminer(?:-[\d.]+)?\.php$)'''
+
+[[rule]]
+id = "php.ignition_rce"
+source = "nginx"
+severity = "critical"
+title = "Laravel Ignition RCE endpoint answered {status}: {host}{path}"
+description = "/_ignition/execute-solution (CVE-2021-3129) accepted a request. On a debug-enabled Laravel app this is remote code execution. Check the app container for dropped files and rotate APP_KEY."
+match = { path = '^/_ignition/execute-solution', status = "2xx" }
+aggregate = { group_by = ["host", "ip"] }
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "POST /_ignition/execute-solution HTTP/1.1" 200 120 "-" "python-requests/2" sn="www.kochmonster.de"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "POST /_ignition/execute-solution HTTP/1.1" 444 0 "-" "python-requests/2" sn="www.kochmonster.de"'
+expect = false
+
+[[rule]]
+id = "php.phpunit_rce"
+source = "nginx"
+severity = "critical"
+title = "phpunit eval-stdin.php answered {status}: {host}{path}"
+description = "vendor/phpunit eval-stdin.php executes arbitrary PHP (CVE-2017-9841). It must not be reachable."
+match = { path = 'eval-stdin\.php$', status = "2xx" }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip"]
+soft404_check = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "POST /vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php HTTP/1.1" 200 33 "-" "-" sn="foodbild.de"'
+expect = true
+
+[[rule]]
+id = "php.debug_tool_exposed"
+source = "nginx"
+severity = "high"
+title = "Debug/admin tool reachable from outside: {host}{path} ({status})"
+description = "Ignition, Debugbar, Telescope, Horizon, Clockwork, phpinfo or Adminer answered with content. They leak secrets (env, queries, sessions) or give DB access. Disable APP_DEBUG / restrict the route."
+match = { path = "{{php_debug_tools}}", status = "2xx", bytes = ">0", trusted = false }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip"]
+soft404_check = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /_ignition/health-check HTTP/1.1" 200 26 "-" "-" sn="www.kochmonster.de"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /telescope/requests HTTP/1.1" 200 5120 "-" "-" sn="www.kochmonster.de"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /_ignition/health-check HTTP/1.1" 404 0 "-" "-" sn="www.kochmonster.de"'
+expect = false
+
+[[rule]]
+id = "php.storage_php_exec"
+source = "nginx"
+severity = "high"
+title = "PHP file executed from a storage/upload path: {host}{path}"
+description = "Uploaded files are served from storage/ or uploads/; a PHP file there answering 2xx is a typical web shell."
+match = { path = '^/(?:storage|uploads|assets|media|files|images)/.*\.(?:php\d?|phtml|phar|pht)$', status = "2xx", bytes = ">0" }
+aggregate = { group_by = ["host", "path"] }
+collect = ["ip", "method"]
+soft404_check = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "POST /storage/x.php HTTP/1.1" 200 12 "-" "-" sn="www.kochmonster.de"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /assets/rezepte/bild.jpg HTTP/1.1" 200 120000 "-" "-" sn="www.kochmonster.de"'
+expect = false
+
+# ---------------------------------------------------------------------------------------
+# Statamic control panel (/cp). Unauthenticated, /cp redirects to /cp/auth/login; a 2xx on any
+# other /cp page therefore means a logged-in session.
+# ---------------------------------------------------------------------------------------
+
+[[rule]]
+id = "statamic.cp_login_attempt"
+source = "nginx"
+kind = "stat"
+title = "Statamic CP login POSTs (by IP, ≥5)"
+match = { method = ["POST"], path = '^/cp/(?:auth/)?login$' }
+aggregate = { group_by = ["ip"], threshold = 5 }
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "POST /cp/auth/login HTTP/1.1" 302 0 "-" "-" sn="www.kochmonster.de"'
+expect = true
+
+[[rule]]
+id = "statamic.cp_session_after_bruteforce"
+source = "nginx"
+severity = "critical"
+title = "Statamic CP session from {ip} after ≥10 login attempts ({host})"
+description = "An IP that hammered the CP login now gets control-panel pages (2xx): the brute force probably succeeded. Check CP users, revoke sessions, rotate passwords."
+match = { method = ["GET", "POST", "PATCH", "PUT", "DELETE"], status = "2xx", trusted = false }
+where = { all = [ { path = '^/cp(?:/|$)' } ], none = [ { path = "{{statamic_cp_public}}" } ] }
+aggregate = { group_by = ["ip", "host"] }
+requires = { rule = "statamic.cp_login_attempt", same = ["ip"], min_count = 10 }
+collect = ["path"]
+
+[[rule]]
+id = "statamic.cp_session_new_source"
+source = "nginx"
+severity = "medium"
+title = "Statamic CP used from new address {ip} ({host})"
+description = "Control-panel pages answered 2xx to an address not seen in 90 days. Usually an editor on a new network; otherwise a stolen session or account."
+match = { status = "2xx", trusted = false }
+where = { all = [ { path = '^/cp(?:/|$)' } ], none = [ { path = "{{statamic_cp_public}}" } ] }
+aggregate = { group_by = ["ip", "host"] }
+new_value_of = "ip"
+collect = ["path"]
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /cp/collections/rezepte HTTP/1.1" 200 51234 "-" "Mozilla/5.0" sn="www.kochmonster.de"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /cp HTTP/1.1" 200 51234 "-" "Mozilla/5.0" sn="www.kochmonster.de"'
+expect = true
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /cp/auth/login HTTP/1.1" 200 4000 "-" "Mozilla/5.0" sn="www.kochmonster.de"'
+expect = false
+[[rule.test]]
+line = '1.2.3.4 - - [01/Oct/2026:10:00:00 +0100] "GET /cp HTTP/1.1" 302 0 "-" "Mozilla/5.0" sn="www.kochmonster.de"'
+expect = false

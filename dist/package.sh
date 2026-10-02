@@ -21,7 +21,7 @@ OUT="target/bundle/$NAME"
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
-cp "$BIN" README.md "$OUT/"
+cp "$BIN" README.md dist/install.sh dist/dispatcher-rules.toml "$OUT/"
 cp -r defaults dist/systemd "$OUT/"
 tar -C target/bundle -czf "target/bundle/$NAME.tar.gz" "$NAME"
 sha256sum "target/bundle/$NAME.tar.gz"
