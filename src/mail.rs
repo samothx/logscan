@@ -62,7 +62,8 @@ fn short_host(h: &str) -> &str {
     h.split('.').next().unwrap_or(h)
 }
 
-/// RFC 5322 message: text/plain UTF-8, quoted-printable (keeps long evidence lines SMTP-safe).
+/// RFC 5322 message, quoted-printable (keeps long evidence lines SMTP-safe). With `email.html`
+/// it is multipart/alternative: the Markdown as text/plain plus an HTML rendering.
 pub fn build_message(cfg: &Email, subject: &str, intro: &str, markdown: &str) -> String {
     let now = Local::now();
     let id = format!("<logscan.{}.{}@{}>", now.format("%Y%m%d%H%M%S"), std::process::id(), crate::scan::hostname());
@@ -75,10 +76,51 @@ pub fn build_message(cfg: &Email, subject: &str, intro: &str, markdown: &str) ->
     m.push_str(&format!("Message-ID: {id}\r\n"));
     m.push_str("Auto-Submitted: auto-generated\r\n");
     m.push_str("MIME-Version: 1.0\r\n");
-    m.push_str("Content-Type: text/plain; charset=utf-8\r\n");
-    m.push_str("Content-Transfer-Encoding: quoted-printable\r\n\r\n");
-    m.push_str(&quoted_printable(&body));
+    if !cfg.html {
+        m.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+        m.push_str("Content-Transfer-Encoding: quoted-printable\r\n\r\n");
+        m.push_str(&quoted_printable(&body));
+        return m;
+    }
+    let boundary = format!("=_logscan_{}_{}", now.timestamp(), std::process::id());
+    m.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n\r\n"));
+    m.push_str("This is a MIME message: the report as plain text and as HTML.\r\n");
+    for (ctype, content) in [("text/plain", body.clone()), ("text/html", markdown_to_html(subject, &body))] {
+        m.push_str(&format!("\r\n--{boundary}\r\n"));
+        m.push_str(&format!("Content-Type: {ctype}; charset=utf-8\r\n"));
+        m.push_str("Content-Transfer-Encoding: quoted-printable\r\n\r\n");
+        m.push_str(&quoted_printable(&content));
+    }
+    m.push_str(&format!("\r\n--{boundary}--\r\n"));
     m
+}
+
+const CSS: &str = "body{font:14px/1.45 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;max-width:960px;margin:16px}\
+h1{font-size:20px;border-bottom:1px solid #d0d7de;padding-bottom:6px}\
+h2{font-size:17px;margin-top:28px;border-bottom:1px solid #d0d7de;padding-bottom:4px}\
+h3{font-size:15px;margin:18px 0 4px}\
+code{background:#f6f8fa;padding:1px 4px;border-radius:4px;font:12px ui-monospace,Menlo,Consolas,monospace}\
+pre{background:#f6f8fa;padding:8px 10px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}\
+pre code{padding:0;font-size:12px}ul{padding-left:22px}li{margin:2px 0}";
+
+/// Renders Markdown to a standalone HTML page. Raw HTML in the input is escaped, never passed
+/// through: titles and evidence contain attacker-chosen text (paths, user agents).
+pub fn markdown_to_html(title: &str, md: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser, html};
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    let events = Parser::new_ext(md, opts).map(|e| match e {
+        Event::Html(t) | Event::InlineHtml(t) => Event::Text(t),
+        other => other,
+    });
+    let mut body = String::new();
+    html::push_html(&mut body, events);
+    let mut esc_title = String::new();
+    pulldown_cmark_escape::escape_html(&mut esc_title, title).expect("writing to a String");
+    format!(
+        "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>{esc_title}</title><style>{CSS}</style></head>\n<body>\n{body}</body></html>\n"
+    )
 }
 
 /// Subjects stay ASCII so no RFC 2047 encoding is needed.
@@ -145,6 +187,23 @@ mod tests {
         assert!(enc.lines().all(|l| l.len() <= 76), "{enc}");
         // Decoding soft breaks gives the original back.
         assert_eq!(enc.replace("=\r\n", "").trim_end(), long);
+    }
+
+    #[test]
+    fn html_escapes_attacker_markup() {
+        let md = "# r\n\n### Sensitive file served: x.de/<img src=http://evil/x>\n\n<script>alert(1)</script>\n\n```\nGET /<b>x</b>\n```\n";
+        let h = markdown_to_html("t <x>", md);
+        assert!(!h.contains("<img") && !h.contains("<script>") && !h.contains("<b>"), "{h}");
+        assert!(h.contains("&lt;img") && h.contains("&lt;script&gt;") && h.contains("<title>t &lt;x&gt;</title>"));
+        assert!(h.contains("<h3>") && h.contains("<pre><code>"));
+    }
+
+    #[test]
+    fn multipart_has_both_parts() {
+        let cfg = Email { to: vec!["a@b.de".into()], from: "c@d.de".into(), ..Email::default() };
+        let m = build_message(&cfg, "s", "intro", "# x");
+        assert!(m.contains("multipart/alternative") && m.contains("text/plain") && m.contains("text/html"));
+        assert_eq!(m.matches("--=_logscan_").count(), 3);
     }
 
     #[test]

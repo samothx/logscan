@@ -177,7 +177,9 @@ model = "deepseek-flash"
 
 ## Email
 
-`[email]` mails the Markdown report (text/plain, quoted-printable) through `sendmail`.
+`[email]` mails the report through `sendmail` as multipart/alternative: the Markdown as
+text/plain plus an HTML rendering (`html = true`, via pulldown-cmark). Raw HTML in the report
+is always escaped, never rendered, because titles and evidence contain attacker-chosen text.
 It only sends when there is something to report:
 - a finding ≥ `min_severity` (default medium) that wasn't in a mail within `repeat_days` (7);
 - an LLM skill whose assessment isn't `clean` (`on_llm_suspicion`);

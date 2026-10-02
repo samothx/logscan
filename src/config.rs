@@ -118,6 +118,8 @@ pub struct Email {
     pub on_llm_suspicion: bool,
     /// Also mail when the run had errors.
     pub on_errors: bool,
+    /// multipart/alternative with an HTML rendering of the report (plain text is always included).
+    pub html: bool,
 }
 
 impl Default for Email {
@@ -131,6 +133,7 @@ impl Default for Email {
             repeat_days: 7,
             on_llm_suspicion: true,
             on_errors: true,
+            html: true,
         }
     }
 }
