@@ -189,28 +189,7 @@ impl Default for Llm {
 
 impl Llm {
     pub fn api_key(&self) -> Result<String> {
-        if let Ok(k) = std::env::var("LOGSCAN_API_KEY")
-            && !k.trim().is_empty()
-        {
-            return Ok(k.trim().to_string());
-        }
-        let path = self.key_path();
-        let key = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading API key from {}", path.display()))?;
-        let key = key.trim();
-        if key.is_empty() {
-            bail!("API key file {} is empty", path.display());
-        }
-        Ok(key.to_string())
-    }
-
-    fn key_path(&self) -> PathBuf {
-        if self.api_key_file.is_relative()
-            && let Ok(dir) = std::env::var("CREDENTIALS_DIRECTORY")
-        {
-            return Path::new(&dir).join(&self.api_key_file);
-        }
-        self.api_key_file.clone()
+        opskit::secret::read("LOGSCAN_API_KEY", &self.api_key_file)
     }
 }
 

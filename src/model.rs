@@ -1,55 +1,7 @@
-use std::fmt;
-use std::str::FromStr;
-
-use anyhow::{Result, bail};
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Info,
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-impl Severity {
-    pub const ALL_DESC: [Severity; 5] = [
-        Severity::Critical,
-        Severity::High,
-        Severity::Medium,
-        Severity::Low,
-        Severity::Info,
-    ];
-}
-
-impl fmt::Display for Severity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Info => "info",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Critical => "critical",
-        })
-    }
-}
-
-impl FromStr for Severity {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        Ok(match s.trim().to_ascii_lowercase().as_str() {
-            "info" => Self::Info,
-            "low" => Self::Low,
-            "medium" | "moderate" => Self::Medium,
-            "high" => Self::High,
-            "critical" => Self::Critical,
-            other => bail!("unknown severity '{other}'"),
-        })
-    }
-}
+pub use opskit::{Severity, truncate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -180,15 +132,4 @@ impl Report {
     pub fn count_at(&self, s: Severity) -> usize {
         self.findings.iter().filter(|f| f.severity == s).count()
     }
-}
-
-pub fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let mut end = max;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
 }

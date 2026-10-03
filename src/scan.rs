@@ -136,7 +136,5 @@ pub fn scan(cfg: &Config, rules: &RuleSet, state: &mut State, win: &Window, lear
 }
 
 pub fn hostname() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "localhost".into())
+    opskit::hostname()
 }

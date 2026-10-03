@@ -1,9 +1,7 @@
 //! Pushes via `ntfy-dispatcher emit`. Events: logscan.alert / logscan.digest / logscan.error.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
-
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
+pub use opskit::notify::Message;
 
 use crate::config::Notify;
 use crate::model::{Finding, Origin, Report, Severity, truncate};
@@ -12,13 +10,6 @@ use crate::state::State;
 pub const EVENT_ALERT: &str = "logscan.alert";
 pub const EVENT_DIGEST: &str = "logscan.digest";
 pub const EVENT_ERROR: &str = "logscan.error";
-
-pub struct Message {
-    pub event: &'static str,
-    pub title: String,
-    pub body: String,
-    pub priority: Option<u8>,
-}
 
 /// Marks repeats (pushed within repeat_suppress_days) and returns the findings to push.
 pub fn select_alerts<'a>(report: &'a mut Report, cfg: &Notify, state: &State, now: i64) -> Vec<&'a Finding> {
@@ -110,21 +101,5 @@ pub fn error_message(host: &str, what: &str) -> Message {
 }
 
 pub fn send(cfg: &Notify, m: &Message) -> Result<()> {
-    let mut cmd = Command::new(&cfg.command);
-    cmd.args(["emit", "--event", m.event, "--title", &m.title, "--body", "-"]);
-    if let Some(p) = m.priority {
-        cmd.args(["--priority", &p.to_string()]);
-    }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("starting {}", cfg.command.display()))?;
-    child.stdin.take().expect("piped").write_all(m.body.as_bytes())?;
-    let out = child.wait_with_output()?;
-    if !out.status.success() {
-        bail!("ntfy-dispatcher emit failed ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim());
-    }
-    Ok(())
+    opskit::notify::emit(&cfg.command, m)
 }

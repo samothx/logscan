@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
@@ -24,21 +24,11 @@ pub struct State {
 
 impl State {
     pub fn load(dir: &Path) -> Result<Self> {
-        let path = dir.join("state.json");
-        match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-        }
+        opskit::state::load(&dir.join("state.json"))
     }
 
     pub fn save(&self, dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        let path = dir.join("state.json");
-        let tmp = dir.join("state.json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?).with_context(|| format!("writing {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
-        Ok(())
+        opskit::state::save(&dir.join("state.json"), self)
     }
 
     /// Drops entries older than their retention so the file doesn't grow forever.

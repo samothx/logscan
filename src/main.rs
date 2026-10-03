@@ -11,7 +11,6 @@ use logscan::rules::{RuleSet, TestDef, test_event};
 use logscan::scan::{self, Window};
 use logscan::state::State;
 use logscan::datasets::{Ctx, Redactor};
-use logscan::llm::Client;
 use logscan::skills::{self, Skill};
 use logscan::{mail, notify, report};
 
@@ -484,7 +483,7 @@ fn run_llm(cfg: &Config, result: &mut scan::ScanResult, state: &mut State, win: 
     if selected.is_empty() {
         return;
     }
-    let client = match Client::new(&cfg.llm) {
+    let client = match logscan::llm::client(&cfg.llm) {
         Ok(c) => c,
         Err(e) => {
             result.report.errors.push(format!("llm: {e:#}"));
@@ -607,7 +606,7 @@ fn cmd_skills(cfg: &Config, cmd: &SkillsCmd) -> Result<ExitCode> {
 }
 
 fn cmd_llm_check(cfg: &Config) -> Result<ExitCode> {
-    let client = Client::new(&cfg.llm)?;
+    let client = logscan::llm::client(&cfg.llm)?;
     println!("provider {} · {} · model {}", cfg.llm.provider, cfg.llm.base_url, cfg.llm.model);
     match client.models() {
         Ok(ids) => {
