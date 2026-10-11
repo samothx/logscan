@@ -219,3 +219,7 @@ strict systemd sandbox.
 
 On anubis the rollout went through `~/ai-sysadm/changes/pending/0032-logscan.sh` (hand-written
 unit and config, predating `install.sh`).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
