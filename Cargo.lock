@@ -642,8 +642,8 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opskit"
-version = "0.1.0"
-source = "git+https://github.com/samothx/opskit?tag=v0.1.0#79d6ef010b814cbd3150fe0834e9ed3ad8109584"
+version = "0.1.1"
+source = "git+https://github.com/samothx/opskit?tag=v0.1.1#957fcb8c3d5ebc3c63ca37941953512ef9c05808"
 dependencies = [
  "anyhow",
  "chrono",
